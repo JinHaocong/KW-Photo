@@ -1,0 +1,37 @@
+{
+  "name": "@kwphoto/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "tsc -b && vite build",
+    "build:desktop": "tsc -b && vite build --base ./",
+    "type-check": "tsc -b"
+  },
+  "dependencies": {
+    "@kwphoto/core": "workspace:*",
+    "@tanstack/react-query": "^5.90.12",
+    "antd": "^6.0.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.555.0",
+    "motion": "^12.38.0",
+    "pulltorefreshjs": "^0.1.22",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "react-intersection-observer": "^10.0.3",
+    "react-router-dom": "^7.9.6",
+    "yet-another-react-lightbox": "^3.31.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.17",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "tailwindcss": "^4.1.17",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}

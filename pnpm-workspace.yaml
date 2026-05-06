@@ -1,0 +1,6 @@
+packages:
+  - .
+  - web
+  - desktop
+  - mobile
+  - packages/*

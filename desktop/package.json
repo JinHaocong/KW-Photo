@@ -1,0 +1,45 @@
+{
+  "name": "@kwphoto/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "mac:build": "export CSC_IDENTITY_AUTO_DISCOVERY=false; vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts && pnpm --filter @kwphoto/web build:desktop && node scripts/copy-renderer.mjs && electron-builder --mac"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  },
+  "build": {
+    "appId": "cloud.kerwin.kwphoto",
+    "productName": "KW Photo",
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.photography",
+      "icon": "assets/icons/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "assets/icons/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

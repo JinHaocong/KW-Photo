@@ -1,0 +1,53 @@
+{
+  "name": "@kwphoto/core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./api-client": {
+      "types": "./src/api-client.ts",
+      "import": "./src/api-client.ts"
+    },
+    "./admin-service": {
+      "types": "./src/admin-service.ts",
+      "import": "./src/admin-service.ts"
+    },
+    "./auth-service": {
+      "types": "./src/auth-service.ts",
+      "import": "./src/auth-service.ts"
+    },
+    "./file-operations-service": {
+      "types": "./src/file-operations-service.ts",
+      "import": "./src/file-operations-service.ts"
+    },
+    "./folders-service": {
+      "types": "./src/folders-service.ts",
+      "import": "./src/folders-service.ts"
+    },
+    "./media-service": {
+      "types": "./src/media-service.ts",
+      "import": "./src/media-service.ts"
+    },
+    "./media-url": {
+      "types": "./src/media-url.ts",
+      "import": "./src/media-url.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "import": "./src/types.ts"
+    }
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jsencrypt": "^3.5.4"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}

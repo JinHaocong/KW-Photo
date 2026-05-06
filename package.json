@@ -1,0 +1,19 @@
+{
+  "name": "kwphoto",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "web:dev": "pnpm --filter @kwphoto/web dev",
+    "web:build": "pnpm --filter @kwphoto/web build",
+    "mac:build": "pnpm --filter @kwphoto/desktop mac:build",
+    "ios:device": "pnpm --filter @kwphoto/mobile ios:device"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller",
+      "esbuild"
+    ]
+  }
+}
