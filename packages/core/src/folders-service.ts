@@ -458,15 +458,6 @@ const readDateValue = (value?: number | string): number | undefined => {
   return Number.isNaN(date.getTime()) ? undefined : date.getTime();
 };
 
-const createCoverGradient = (seed: number): string => {
-  const gradients = [
-    'linear-gradient(135deg,#dcfce7,#10b981 48%,#064e3b)',
-    'linear-gradient(135deg,#dbeafe,#6366f1 52%,#111827)',
-    'linear-gradient(135deg,#fef3c7,#f97316 54%,#7c2d12)',
-    'linear-gradient(135deg,#fce7f3,#ec4899 50%,#831843)',
-    'linear-gradient(135deg,#cffafe,#06b6d4 48%,#164e63)',
-    'linear-gradient(135deg,#ede9fe,#8b5cf6 52%,#312e81)',
-  ];
-
-  return gradients[Math.abs(seed) % gradients.length];
+const createCoverGradient = (_seed: number): string => {
+  return 'linear-gradient(135deg, #f1f5f9, #94a3b8 52%, #475569)';
 };

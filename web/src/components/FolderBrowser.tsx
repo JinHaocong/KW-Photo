@@ -367,7 +367,6 @@ const FolderCard = ({
         onTouchEnd={handleCoverTouchEnd}
         onTouchMove={handleCoverTouchMove}
         onTouchStart={handleCoverTouchStart}
-        style={{ '--folder-cover': folder.coverFallback } as CSSProperties}
         type="button"
       >
         <span className="folder-cover__icon">
@@ -667,10 +666,11 @@ const FileThumbnailMedia = ({
 };
 
 export const FileIcon = ({ file }: { file: FolderFileSummary }) => {
-  if (file.md5 && !VIDEO_TYPES.has(file.fileType)) {
-    return <FileImage size={24} />;
-  }
-  return <File size={24} />;
+  return (
+    <div className="file-icon-fallback">
+      {file.fileType.slice(0, 4)}
+    </div>
+  );
 };
 
 /**

@@ -1,4 +1,5 @@
 export * from './api-client';
+export * from './admin-tabs';
 export * from './admin-service';
 export * from './auth-service';
 export * from './file-operations-service';

@@ -1,6 +1,8 @@
 import type { ComponentType } from 'react';
-import { Image, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet } from 'react-native';
 import type { ImageSourcePropType, ModalProps } from 'react-native';
+
+import { MobileFullscreenModal } from './components/MobileDialog';
 
 type ImageViewSource = ImageSourcePropType & { uri?: string };
 
@@ -32,7 +34,6 @@ const MobileImageView = ({
   imageIndex,
   images,
   onRequestClose,
-  presentationStyle,
   visible,
 }: MobileImageViewProps) => {
   const currentImage = images[imageIndex];
@@ -42,21 +43,18 @@ const MobileImageView = ({
   }
 
   return (
-    <Modal
+    <MobileFullscreenModal
       animationType={animationType}
-      onRequestClose={onRequestClose}
-      presentationStyle={presentationStyle}
-      transparent={presentationStyle === 'overFullScreen'}
+      contentStyle={[styles.container, { backgroundColor }]}
+      onClose={onRequestClose}
       visible={visible}
     >
-      <View style={[styles.container, { backgroundColor }]}>
-        {HeaderComponent ? <HeaderComponent imageIndex={imageIndex} /> : null}
-        <Pressable onPress={onRequestClose} style={styles.imageFrame}>
-          {currentImage ? <Image resizeMode="contain" source={currentImage} style={styles.image} /> : null}
-        </Pressable>
-        {FooterComponent ? <FooterComponent imageIndex={imageIndex} /> : null}
-      </View>
-    </Modal>
+      {HeaderComponent ? <HeaderComponent imageIndex={imageIndex} /> : null}
+      <Pressable onPress={onRequestClose} style={styles.imageFrame}>
+        {currentImage ? <Image resizeMode="contain" source={currentImage} style={styles.image} /> : null}
+      </Pressable>
+      {FooterComponent ? <FooterComponent imageIndex={imageIndex} /> : null}
+    </MobileFullscreenModal>
   );
 };
 

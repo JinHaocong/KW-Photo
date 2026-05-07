@@ -1,13 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
+import { ADMIN_TAB_KEYS, isAdminTab } from '@kwphoto/core';
+import type { AdminTab } from '@kwphoto/core';
+
 import type { MobilePage, MobileSession } from './mobile-types';
 
 export type MobileFolderCardSize = 'small' | 'medium' | 'large';
 export type MobileFolderSortDirection = 'ASC' | 'DESC';
 export type MobileFolderSortField = 'tokenAt' | 'mtime' | 'fileName' | 'size' | 'fileType';
 export type MobileFolderViewMode = 'grid' | 'list';
-export type MobileAdminTab = 'overview' | 'gallery' | 'tasks' | 'users' | 'cache' | 'system';
+export type MobileAdminTab = AdminTab;
 export type MobileServerAddressRole = 'primary' | 'backup';
 export type MobileThemeName =
   | 'blue'
@@ -48,7 +51,7 @@ const SESSION_KEY = 'kwphoto.mobile.session.v1';
 const PREFERENCES_KEY = 'kwphoto.mobile.preferences.v1';
 
 export const DEFAULT_MOBILE_SERVER_URL = 'https://d.mtmt.tech';
-export const MOBILE_ADMIN_TABS: MobileAdminTab[] = ['overview', 'gallery', 'tasks', 'users', 'cache', 'system'];
+export const MOBILE_ADMIN_TABS: MobileAdminTab[] = [...ADMIN_TAB_KEYS];
 
 /**
  * Reads the persisted authenticated mobile session from secure storage.
@@ -99,7 +102,7 @@ export const mergeMobilePreferences = async (patch: MobilePreferences): Promise<
  * Checks whether a persisted value is a supported mobile admin center tab.
  */
 export const isMobileAdminTab = (value: unknown): value is MobileAdminTab => {
-  return typeof value === 'string' && MOBILE_ADMIN_TABS.includes(value as MobileAdminTab);
+  return isAdminTab(value);
 };
 
 /**

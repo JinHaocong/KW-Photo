@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { createBrowserMediaUrl, createThumbnailUrl } from '../shared/media-url';
 import type { FolderBreadcrumbItem, FolderDirectory, FolderFileSummary, FolderSummary } from '../shared/types';
+import { Modal } from './Modal';
 
 export type BatchMoveOverwriteMode = 0 | 1 | 2;
 
@@ -38,20 +39,18 @@ export const CreateFolderDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <FolderNameDialogContent
-        currentPath={currentPath}
-        error={error}
-        name={name}
-        onChangeName={onChangeName}
-        onClose={onClose}
-        onSubmit={onSubmit}
-        submitLabel="创建"
-        submitting={submitting}
-        submittingLabel="创建中..."
-        title="新建文件夹"
-      />
-    </div>
+    <FolderNameDialogContent
+      currentPath={currentPath}
+      error={error}
+      name={name}
+      onChangeName={onChangeName}
+      onClose={onClose}
+      onSubmit={onSubmit}
+      submitLabel="创建"
+      submitting={submitting}
+      submittingLabel="创建中..."
+      title="新建文件夹"
+    />
   );
 };
 
@@ -85,20 +84,18 @@ export const FolderNameDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <FolderNameDialogContent
-        currentPath={currentPath}
-        error={error}
-        name={name}
-        onChangeName={onChangeName}
-        onClose={onClose}
-        onSubmit={onSubmit}
-        submitLabel={submitLabel}
-        submitting={submitting}
-        submittingLabel={submittingLabel}
-        title={title}
-      />
-    </div>
+    <FolderNameDialogContent
+      currentPath={currentPath}
+      error={error}
+      name={name}
+      onChangeName={onChangeName}
+      onClose={onClose}
+      onSubmit={onSubmit}
+      submitLabel={submitLabel}
+      submitting={submitting}
+      submittingLabel={submittingLabel}
+      title={title}
+    />
   );
 };
 
@@ -149,91 +146,9 @@ export const FolderCoverDialog = ({
   const pathItems = createCoverPathItems(breadcrumbs, folder, currentPath);
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <section className="dialog folder-cover-dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <h2>设置文件夹封面</h2>
-        <p>
-          {folder.name} · 从文件夹内选择最多 4 张图片作为封面拼贴。
-        </p>
-        <div className="cover-picker-toolbar">
-          <CoverPickerBreadcrumb
-            disabled={loading || autoSubmitting || submitting}
-            items={pathItems}
-            onOpenFolderId={onOpenFolderId}
-          />
-          <button
-            className="secondary-btn"
-            disabled={loading || autoSubmitting || submitting}
-            onClick={() => void onAutoSet()}
-            type="button"
-          >
-            {autoSubmitting ? '自动设置中...' : '自动设置'}
-          </button>
-        </div>
-
-        {loading ? <div className="cover-picker-state">正在加载文件夹图片...</div> : null}
-
-        {!loading && files.length + folders.length === 0 ? (
-          <div className="cover-picker-state">当前文件夹没有可设置为封面的图片。</div>
-        ) : null}
-
-        {!loading && files.length + folders.length > 0 ? (
-          <div className="cover-picker-grid">
-            {folders.map((childFolder) => (
-              <button
-                className="cover-picker-card cover-picker-folder"
-                key={childFolder.id || childFolder.path}
-                onClick={() => onOpenFolder(childFolder)}
-                type="button"
-              >
-                <span className="cover-picker-thumb">
-                  <Folder size={28} />
-                </span>
-                <span className="cover-picker-name" title={childFolder.name}>
-                  {childFolder.name}
-                </span>
-              </button>
-            ))}
-            {files.map((file) => {
-              const selected = selectedHashSet.has(file.md5);
-              const thumbnailUrl = createBrowserMediaUrl(createThumbnailUrl({
-                authCode,
-                baseUrl: serverUrl,
-                md5: file.md5,
-                type: 'h220',
-              }));
-
-              return (
-                <button
-                  aria-pressed={selected}
-                  className={selected ? 'cover-picker-card is-selected' : 'cover-picker-card'}
-                  key={`${file.id}-${file.md5}`}
-                  onClick={() => onToggleFile(file)}
-                  type="button"
-                >
-                  <span className="cover-picker-thumb">
-                    {thumbnailUrl ? <img alt="" src={thumbnailUrl} /> : <Image size={22} />}
-                  </span>
-                  <span className="cover-picker-name" title={file.name}>
-                    {file.name}
-                  </span>
-                  {selected ? (
-                    <span className="cover-picker-check">
-                      <Check size={14} />
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-
-        <div className="cover-picker-meta">
-          已选择 {selectedHashes.length}/4
-        </div>
-
-        {error ? <div className="form-error">{error}</div> : null}
-
+    <Modal
+      className="folder-cover-dialog"
+      footer={
         <div className="dialog-actions">
           <button className="secondary-btn" disabled={autoSubmitting || submitting} onClick={onClose} type="button">
             取消
@@ -247,8 +162,93 @@ export const FolderCoverDialog = ({
             {submitting ? '保存中...' : '保存封面'}
           </button>
         </div>
-      </section>
-    </div>
+      }
+      onClose={onClose}
+      open={true}
+      title="设置文件夹封面"
+    >
+      <p>
+        {folder.name} · 从文件夹内选择最多 4 张图片作为封面拼贴。
+      </p>
+      <div className="cover-picker-toolbar">
+        <CoverPickerBreadcrumb
+          disabled={loading || autoSubmitting || submitting}
+          items={pathItems}
+          onOpenFolderId={onOpenFolderId}
+        />
+        <button
+          className="secondary-btn"
+          disabled={loading || autoSubmitting || submitting}
+          onClick={() => void onAutoSet()}
+          type="button"
+        >
+          {autoSubmitting ? '自动设置中...' : '自动设置'}
+        </button>
+      </div>
+
+      {loading ? <div className="cover-picker-state">正在加载文件夹图片...</div> : null}
+
+      {!loading && files.length + folders.length === 0 ? (
+        <div className="cover-picker-state">当前文件夹没有可设置为封面的图片。</div>
+      ) : null}
+
+      {!loading && files.length + folders.length > 0 ? (
+        <div className="cover-picker-grid">
+          {folders.map((childFolder) => (
+            <button
+              className="cover-picker-card cover-picker-folder"
+              key={childFolder.id || childFolder.path}
+              onClick={() => onOpenFolder(childFolder)}
+              type="button"
+            >
+              <span className="cover-picker-thumb">
+                <Folder size={28} />
+              </span>
+              <span className="cover-picker-name" title={childFolder.name}>
+                {childFolder.name}
+              </span>
+            </button>
+          ))}
+          {files.map((file) => {
+            const selected = selectedHashSet.has(file.md5);
+            const thumbnailUrl = createBrowserMediaUrl(createThumbnailUrl({
+              authCode,
+              baseUrl: serverUrl,
+              md5: file.md5,
+              type: 'h220',
+            }));
+
+            return (
+              <button
+                aria-pressed={selected}
+                className={selected ? 'cover-picker-card is-selected' : 'cover-picker-card'}
+                key={`${file.id}-${file.md5}`}
+                onClick={() => onToggleFile(file)}
+                type="button"
+              >
+                <span className="cover-picker-thumb">
+                  {thumbnailUrl ? <img alt="" src={thumbnailUrl} /> : <Image size={22} />}
+                </span>
+                <span className="cover-picker-name" title={file.name}>
+                  {file.name}
+                </span>
+                {selected ? (
+                  <span className="cover-picker-check">
+                    <Check size={14} />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="cover-picker-meta">
+        已选择 {selectedHashes.length}/4
+      </div>
+
+      {error ? <div className="form-error">{error}</div> : null}
+    </Modal>
   );
 };
 
@@ -290,65 +290,9 @@ export const BatchMoveDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <section className="dialog batch-dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <h2>移动所选内容</h2>
-        <p>{selectedSummary} · 选择目标文件夹后执行移动。</p>
-
-        <div className="batch-folder-picker-toolbar">
-          <button className="secondary-btn" disabled={loading || submitting} onClick={onOpenRoot} type="button">
-            根目录
-          </button>
-          <CoverPickerBreadcrumb
-            disabled={loading || submitting}
-            items={createDirectoryPathItems(currentDirectory)}
-            onOpenFolderId={onOpenFolderId}
-          />
-        </div>
-
-        <div className="batch-target-panel">
-          <div>
-            <span>目标文件夹</span>
-            <strong>{target?.path || target?.name || '未选择'}</strong>
-          </div>
-          <label>
-            重名处理
-            <select
-              disabled={submitting}
-              onChange={(event) => onChangeOverwriteMode(Number(event.target.value) as BatchMoveOverwriteMode)}
-              value={overwriteMode}
-            >
-              <option value={2}>自动重命名</option>
-              <option value={0}>跳过冲突</option>
-              <option value={1}>覆盖文件</option>
-            </select>
-          </label>
-        </div>
-
-        {loading ? <div className="cover-picker-state">正在加载目标文件夹...</div> : null}
-
-        {!loading && currentDirectory.folders.length === 0 ? (
-          <div className="cover-picker-state">当前层级没有子文件夹。</div>
-        ) : null}
-
-        {!loading && currentDirectory.folders.length > 0 ? (
-          <div className="batch-folder-grid">
-            {currentDirectory.folders.map((folder) => (
-              <div className="batch-folder-card" key={folder.id || folder.path}>
-                <button className="batch-folder-card__main" onClick={() => onOpenFolder(folder)} type="button">
-                  <Folder size={24} />
-                  <span title={folder.name}>{folder.name}</span>
-                </button>
-                <button className="secondary-btn" onClick={() => onSelectTarget(folder)} type="button">
-                  设为目标
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        {error ? <div className="form-error">{error}</div> : null}
-
+    <Modal
+      className="batch-dialog"
+      footer={
         <div className="dialog-actions">
           <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
             取消
@@ -362,8 +306,67 @@ export const BatchMoveDialog = ({
             {submitting ? '移动中...' : '确认移动'}
           </button>
         </div>
-      </section>
-    </div>
+      }
+      onClose={onClose}
+      open={true}
+      title="移动所选内容"
+    >
+      <p>{selectedSummary} · 选择目标文件夹后执行移动。</p>
+
+      <div className="batch-folder-picker-toolbar">
+        <button className="secondary-btn" disabled={loading || submitting} onClick={onOpenRoot} type="button">
+          根目录
+        </button>
+        <CoverPickerBreadcrumb
+          disabled={loading || submitting}
+          items={createDirectoryPathItems(currentDirectory)}
+          onOpenFolderId={onOpenFolderId}
+        />
+      </div>
+
+      <div className="batch-target-panel">
+        <div>
+          <span>目标文件夹</span>
+          <strong>{target?.path || target?.name || '未选择'}</strong>
+        </div>
+        <label>
+          重名处理
+          <select
+            disabled={submitting}
+            onChange={(event) => onChangeOverwriteMode(Number(event.target.value) as BatchMoveOverwriteMode)}
+            value={overwriteMode}
+          >
+            <option value={2}>自动重命名</option>
+            <option value={0}>跳过冲突</option>
+            <option value={1}>覆盖文件</option>
+          </select>
+        </label>
+      </div>
+
+      {loading ? <div className="cover-picker-state">正在加载目标文件夹...</div> : null}
+
+      {!loading && currentDirectory.folders.length === 0 ? (
+        <div className="cover-picker-state">当前层级没有子文件夹。</div>
+      ) : null}
+
+      {!loading && currentDirectory.folders.length > 0 ? (
+        <div className="batch-folder-grid">
+          {currentDirectory.folders.map((folder) => (
+            <div className="batch-folder-card" key={folder.id || folder.path}>
+              <button className="batch-folder-card__main" onClick={() => onOpenFolder(folder)} type="button">
+                <Folder size={24} />
+                <span title={folder.name}>{folder.name}</span>
+              </button>
+              <button className="secondary-btn" onClick={() => onSelectTarget(folder)} type="button">
+                设为目标
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {error ? <div className="form-error">{error}</div> : null}
+    </Modal>
   );
 };
 
@@ -403,51 +406,9 @@ export const BatchShareDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <section className="dialog batch-dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <h2>创建分享链接</h2>
-        <p>当前选择 {fileCount} 个文件，可配置过期时间、访问密码和访问权限。</p>
-
-        <div className="form-grid">
-          <label>
-            分享描述
-            <input onChange={(event) => setDesc(event.target.value)} placeholder="请输入分享描述" value={desc} />
-          </label>
-          <label>
-            过期时间
-            <select
-              onChange={(event) => {
-                const value = event.target.value;
-                setExpiresInDays(value === 'forever' ? undefined : Number(value));
-              }}
-              value={expiresInDays ?? 'forever'}
-            >
-              <option value={7}>7 天后过期</option>
-              <option value={30}>30 天后过期</option>
-              <option value={90}>90 天后过期</option>
-              <option value="forever">永久有效</option>
-            </select>
-          </label>
-          <label>
-            访问密码
-            <input onChange={(event) => setPassword(event.target.value)} placeholder="留空则不设置" value={password} />
-          </label>
-          <div className="batch-switch-row">
-            <label>
-              <input checked={showExif} onChange={(event) => setShowExif(event.target.checked)} type="checkbox" />
-              显示 EXIF
-            </label>
-            <label>
-              <input
-                checked={showDownload}
-                onChange={(event) => setShowDownload(event.target.checked)}
-                type="checkbox"
-              />
-              允许下载
-            </label>
-          </div>
-        </div>
-
+    <Modal
+      className="batch-dialog"
+      footer={
         <div className="dialog-actions">
           <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
             取消
@@ -461,8 +422,53 @@ export const BatchShareDialog = ({
             {submitting ? '生成中...' : '生成并复制'}
           </button>
         </div>
-      </section>
-    </div>
+      }
+      onClose={onClose}
+      open={true}
+      title="创建分享链接"
+    >
+      <p>当前选择 {fileCount} 个文件，可配置过期时间、访问密码和访问权限。</p>
+
+      <div className="form-grid">
+        <label>
+          分享描述
+          <input onChange={(event) => setDesc(event.target.value)} placeholder="请输入分享描述" value={desc} />
+        </label>
+        <label>
+          过期时间
+          <select
+            onChange={(event) => {
+              const value = event.target.value;
+              setExpiresInDays(value === 'forever' ? undefined : Number(value));
+            }}
+            value={expiresInDays ?? 'forever'}
+          >
+            <option value={7}>7 天后过期</option>
+            <option value={30}>30 天后过期</option>
+            <option value={90}>90 天后过期</option>
+            <option value="forever">永久有效</option>
+          </select>
+        </label>
+        <label>
+          访问密码
+          <input onChange={(event) => setPassword(event.target.value)} placeholder="留空则不设置" value={password} />
+        </label>
+        <div className="batch-switch-row">
+          <label>
+            <input checked={showExif} onChange={(event) => setShowExif(event.target.checked)} type="checkbox" />
+            显示 EXIF
+          </label>
+          <label>
+            <input
+              checked={showDownload}
+              onChange={(event) => setShowDownload(event.target.checked)}
+              type="checkbox"
+            />
+            允许下载
+          </label>
+        </div>
+      </div>
+    </Modal>
   );
 };
 
@@ -484,10 +490,9 @@ export const BatchDeleteConfirmDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <section className="dialog logout-dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <h2>删除所选内容</h2>
-        <p>{selectedSummary} · 文件会进入回收站，文件夹会按服务端规则删除。</p>
+    <Modal
+      className="logout-dialog"
+      footer={
         <div className="dialog-actions">
           <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
             取消
@@ -496,8 +501,13 @@ export const BatchDeleteConfirmDialog = ({
             {submitting ? '删除中...' : '确认删除'}
           </button>
         </div>
-      </section>
-    </div>
+      }
+      onClose={onClose}
+      open={true}
+      title="删除所选内容"
+    >
+      <p>{selectedSummary} · 文件会进入回收站，文件夹会按服务端规则删除。</p>
+    </Modal>
   );
 };
 
@@ -606,17 +616,26 @@ const FolderNameDialogContent = ({
   title: string;
 }) => {
   return (
-    <section className="dialog" onMouseDown={(event) => event.stopPropagation()}>
-      <h2>{title}</h2>
+    <Modal
+      asForm
+      footer={
+        <div className="dialog-actions">
+          <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
+            取消
+          </button>
+          <button className="primary-btn" disabled={submitting || !name.trim()} type="submit">
+            {submitting ? submittingLabel : submitLabel}
+          </button>
+        </div>
+      }
+      onClose={onClose}
+      onSubmit={onSubmit}
+      open={true}
+      title={title}
+    >
       <p>当前位置：{currentPath}</p>
 
-      <form
-        className="form-grid"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onSubmit();
-        }}
-      >
+      <div className="form-grid">
         <label>
           文件夹名称
           <input
@@ -629,16 +648,7 @@ const FolderNameDialogContent = ({
         </label>
 
         {error ? <div className="form-error">{error}</div> : null}
-
-        <div className="dialog-actions">
-          <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
-            取消
-          </button>
-          <button className="primary-btn" disabled={submitting || !name.trim()} type="submit">
-            {submitting ? submittingLabel : submitLabel}
-          </button>
-        </div>
-      </form>
-    </section>
+      </div>
+    </Modal>
   );
 };

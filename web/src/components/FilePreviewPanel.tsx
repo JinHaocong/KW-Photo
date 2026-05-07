@@ -40,6 +40,7 @@ import {
 } from '../shared/media-url';
 import type { FolderFileSummary } from '../shared/types';
 import { VIDEO_TYPES } from './FolderBrowser';
+import { Modal } from './Modal';
 
 type PreviewSlide = Slide & {
   file: FolderFileSummary;
@@ -1534,8 +1535,12 @@ const PreviewAlbumDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay file-preview-album-overlay" onMouseDown={onClose}>
-      <section className="dialog file-preview-album-dialog" onMouseDown={(event) => event.stopPropagation()}>
+    <Modal
+      className="file-preview-album-dialog"
+      onClose={onClose}
+      open={open}
+      overlayClassName="file-preview-album-overlay"
+      title={
         <div className="file-preview-album-dialog__header">
           <div>
             <h2>添加到相册</h2>
@@ -1544,34 +1549,34 @@ const PreviewAlbumDialog = ({
             <X size={18} />
           </button>
         </div>
+      }
+    >
+      {loading ? <div className="file-preview__hint">正在读取相册...</div> : null}
+      {error ? <div className="file-preview__hint is-error">{error}</div> : null}
+      {!loading && albums.length === 0 ? <div className="file-preview__hint">暂无可添加的相册</div> : null}
 
-        {loading ? <div className="file-preview__hint">正在读取相册...</div> : null}
-        {error ? <div className="file-preview__hint is-error">{error}</div> : null}
-        {!loading && albums.length === 0 ? <div className="file-preview__hint">暂无可添加的相册</div> : null}
+      <div className="file-preview-album-list">
+        {albums.map((album) => {
+          const included = albumIds.includes(album.id);
 
-        <div className="file-preview-album-list">
-          {albums.map((album) => {
-            const included = albumIds.includes(album.id);
-
-            return (
-              <button
-                className={included ? 'file-preview-album-row is-active' : 'file-preview-album-row'}
-                disabled={busy}
-                key={album.id}
-                onClick={() => onToggleAlbum(album)}
-                type="button"
-              >
-                <span>
-                  {included ? <Check size={16} /> : <Images size={16} />}
-                </span>
-                <strong>{album.name}</strong>
-                <em>{album.count ?? 0} 个文件</em>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-    </div>
+          return (
+            <button
+              className={included ? 'file-preview-album-row is-active' : 'file-preview-album-row'}
+              disabled={busy}
+              key={album.id}
+              onClick={() => onToggleAlbum(album)}
+              type="button"
+            >
+              <span>
+                {included ? <Check size={16} /> : <Images size={16} />}
+              </span>
+              <strong>{album.name}</strong>
+              <em>{album.count ?? 0} 个文件</em>
+            </button>
+          );
+        })}
+      </div>
+    </Modal>
   );
 };
 

@@ -1,3 +1,5 @@
+import { ADMIN_TAB_KEYS } from '@kwphoto/core';
+
 import { THEME_NAMES } from './theme';
 import type {
   AdminTab,
@@ -32,7 +34,7 @@ const VIEW_MODES: ViewMode[] = ['timeline', 'grid', 'list'];
 const FOLDER_CARD_SIZES: FolderCardSize[] = ['small', 'medium', 'large'];
 const FOLDER_SORT_FIELDS: FolderSortField[] = ['tokenAt', 'mtime', 'fileName', 'size', 'fileType'];
 const SORT_DIRECTIONS: SortDirection[] = ['DESC', 'ASC'];
-const ADMIN_TABS: AdminTab[] = ['overview', 'gallery', 'tasks', 'users', 'cache', 'system'];
+const ADMIN_TABS: AdminTab[] = [...ADMIN_TAB_KEYS];
 const MOBILE_MENU_MIN_COUNT = 3;
 const MOBILE_MENU_MAX_COUNT = 6;
 const DEFAULT_MOBILE_MENU_PAGES: WorkspacePage[] = ['photos', 'folders', 'search', 'upload', 'admin', 'settings'];

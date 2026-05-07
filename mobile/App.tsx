@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -45,6 +46,7 @@ import type { MobileSession } from './src/mobile-types';
 import { MobileWorkspace } from './src/MobileWorkspace';
 
 const DEFAULT_THEME = MOBILE_THEME_TOKENS[DEFAULT_MOBILE_THEME];
+const queryClient = new QueryClient();
 
 /**
  * Mobile entry screen for the Expo app.
@@ -276,30 +278,31 @@ export default function App() {
   const safeAreaEdges = session ? (['top', 'left', 'right'] as const) : undefined;
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView edges={safeAreaEdges} style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.keyboard}
-        >
-          {session ? (
-            <View style={styles.sessionContent}>
-              <MobileWorkspace
-                initialActiveTheme={activeTheme}
-                onApplyServerUrl={handleApplyServerUrl}
-                onChangeRootTheme={setActiveTheme}
-                onChangeTokens={handleChangeTokens}
-                onLogout={handleLogout}
-                session={session}
-              />
-            </View>
-          ) : (
-            <ScrollView
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
+    <QueryClientProvider client={queryClient}>
+      <SafeAreaProvider>
+        <SafeAreaView edges={safeAreaEdges} style={styles.safeArea}>
+          <StatusBar style="dark" />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboard}
+          >
+            {session ? (
+              <View style={styles.sessionContent}>
+                <MobileWorkspace
+                  initialActiveTheme={activeTheme}
+                  onApplyServerUrl={handleApplyServerUrl}
+                  onChangeRootTheme={setActiveTheme}
+                  onChangeTokens={handleChangeTokens}
+                  onLogout={handleLogout}
+                  session={session}
+                />
+              </View>
+            ) : (
+              <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
             <View style={styles.hero}>
               <View style={styles.brandRow}>
                 <View
@@ -416,11 +419,12 @@ export default function App() {
                 {message}
               </Text>
             ) : null}
-            </ScrollView>
-          )}
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </SafeAreaProvider>
+              </ScrollView>
+            )}
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    </QueryClientProvider>
   );
 }
 

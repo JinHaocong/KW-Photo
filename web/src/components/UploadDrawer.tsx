@@ -9,6 +9,7 @@ import type {
   UploadTarget,
   UploadTask,
 } from '../shared/types';
+import { Modal } from './Modal';
 
 interface UploadDrawerProps {
   open: boolean;
@@ -213,15 +214,23 @@ const UploadTargetPickerDialog = ({
   const currentTarget = createUploadTargetFromDirectory(currentDirectory);
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onClose}>
-      <section
-        aria-modal="true"
-        className="dialog batch-dialog upload-target-dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-        role="dialog"
-      >
-        <h2>选择上传目录</h2>
-        <p>选中后，后续添加到上传中心的文件会进入该目录。</p>
+    <Modal
+      className="batch-dialog upload-target-dialog"
+      footer={
+        <div className="dialog-actions">
+          <button className="secondary-btn" onClick={() => onSelectTarget(undefined)} type="button">
+            默认上传目录
+          </button>
+          <button className="primary-btn" onClick={onClose} type="button">
+            完成
+          </button>
+        </div>
+      }
+      onClose={onClose}
+      open={open}
+      title="选择上传目录"
+    >
+      <p>选中后，后续添加到上传中心的文件会进入该目录。</p>
 
         <div className="batch-folder-picker-toolbar">
           <button
@@ -288,16 +297,7 @@ const UploadTargetPickerDialog = ({
 
         {error ? <div className="form-error">{error}</div> : null}
 
-        <div className="dialog-actions">
-          <button className="secondary-btn" onClick={() => onSelectTarget(undefined)} type="button">
-            默认上传目录
-          </button>
-          <button className="primary-btn" onClick={onClose} type="button">
-            完成
-          </button>
-        </div>
-      </section>
-    </div>
+    </Modal>
   );
 };
 

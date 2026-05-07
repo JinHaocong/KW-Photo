@@ -1,3 +1,5 @@
+import { Modal } from './Modal';
+
 interface LogoutConfirmDialogProps {
   onCancel: () => void;
   onConfirm: () => void;
@@ -13,15 +15,9 @@ export const LogoutConfirmDialog = ({ onCancel, onConfirm, open }: LogoutConfirm
   }
 
   return (
-    <div className="overlay modal-overlay" onMouseDown={onCancel}>
-      <section
-        aria-modal="true"
-        className="dialog logout-dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-        role="dialog"
-      >
-        <h2>退出登录</h2>
-        <p>退出后会清除当前设备保存的登录态，再次进入需要重新连接并登录服务端。</p>
+    <Modal
+      className="logout-dialog"
+      footer={
         <div className="dialog-actions">
           <button className="secondary-btn" onClick={onCancel} type="button">
             取消
@@ -30,7 +26,12 @@ export const LogoutConfirmDialog = ({ onCancel, onConfirm, open }: LogoutConfirm
             确认退出
           </button>
         </div>
-      </section>
-    </div>
+      }
+      onClose={onCancel}
+      open={open}
+      title="退出登录"
+    >
+      <p>退出后会清除当前设备保存的登录态，再次进入需要重新连接并登录服务端。</p>
+    </Modal>
   );
 };

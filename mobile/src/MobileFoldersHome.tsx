@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Modal,
   PanResponder,
   Pressable,
   ScrollView,
@@ -98,6 +97,94 @@ import {
   useMobileTheme,
 } from './mobile-theme';
 import { MobileLoadingState, MobilePullRefreshIndicator } from './MobileLoadingState';
+import {
+  CARD_SIZE_OPTIONS,
+  DEFAULT_CARD_SIZE,
+  DEFAULT_SORT_DIRECTION,
+  DEFAULT_SORT_FIELD,
+  DEFAULT_VIEW_MODE,
+  DIRECTORY_FLASH_LIST_DRAW_DISTANCE,
+  DIRECTORY_PULL_REFRESH_REVEAL_DISTANCE,
+  DIRECTORY_PULL_REFRESH_TRIGGER_DISTANCE,
+  FOLDER_GESTURE_RESPONSE_DISTANCE,
+  FOLDER_GRID_COLUMN_COUNT,
+  FOLDER_GRID_GAP,
+  FORBIDDEN_FOLDER_NAME_PATTERN,
+  LONG_PRESS_DELAY_MS,
+  MAX_FOLDER_COVER_COUNT,
+  MOVE_OVERWRITE_OPTIONS,
+  PREVIEW_NEIGHBOR_PRELOAD_RADIUS,
+  PREVIEW_NOTICE_DURATION_MS,
+  PREVIEW_SWIPE_CLOSE_DISTANCE,
+  PREVIEW_SWIPE_DIRECTION_RATIO,
+  PREVIEW_SWIPE_STEP_DISTANCE,
+  SORT_DIRECTION_ICON,
+  SORT_DIRECTION_LABEL,
+  SORT_DIRECTION_OPTIONS,
+  SORT_FIELD_ICON,
+  SORT_FIELD_LABEL,
+  SORT_FIELD_OPTIONS,
+  STATUS_COPY,
+  VIEW_MODE_OPTIONS,
+} from './folders/folderConstants';
+import type { FolderFabIconName } from './folders/folderConstants';
+import type {
+  DirectoryListItem,
+  DirectorySelectionKey,
+  PathItem,
+  PreviewImageGalleryItem,
+  PreviewImageSource,
+  PreviewMode,
+  SelectionItem,
+} from './folders/folderTypes';
+import {
+  buildMediaWaterfallColumns,
+  createCurrentDirectoryPathItems,
+  createDirectoryListItems,
+  createDirectoryPathItems,
+  createEmptyDirectory,
+  createFileSelectionKey,
+  createFileThumbnailKey,
+  createFolderCardLayoutStyle,
+  createFolderGridLayoutStyle,
+  createFolderSelectionKey,
+  createFolderStackRoutes,
+  createMobileShareUrl,
+  createPreviewMediaKey,
+  formatSelectionSummary,
+  getCoverCandidateFiles,
+  getBreadcrumbItemId,
+  getDirectorySelectionItems,
+  getLoadedImageAspectRatio,
+  getMediaAspectRatio,
+  getMediaPlaceholderAspectRatio,
+  getMediaWaterfallColumnCount,
+  getPreviewActionLabel,
+  getPreviewCacheLabel,
+  getPreviewGestureAction,
+  getPreviewImageSourceLabel,
+  getPreviewWarmThumbnailItems,
+  getVideoPlaybackUrl,
+  isCoverCandidateFile,
+  isDirectVideoPreviewSupported,
+  isImageFile,
+  isMediaFile,
+  isSameStringRecord,
+  isSelectedFile,
+  isSelectedFolder,
+  isVideoFile,
+  mergePreviewFileIntoList,
+  normalizePreviewFileType,
+  shouldCapturePreviewGesture,
+  warmPreviewThumbnailUri,
+} from './folders/folderUtils';
+import {
+  PreviewDetailPanel,
+  PreviewMorePanel,
+  PreviewSettingsPanel,
+  PreviewToolbarButton,
+} from './folders/panels/PreviewPanels';
+import { MobileBottomSheetModal, MobileCenterDialog, MobileFullscreenModal } from './components/MobileDialog';
 import ImageView from './MobileImageView';
 import { useCachedMobileMediaUri } from './useCachedMobileMediaUri';
 import { useMobileApiOptions } from './useMobileApiOptions';
@@ -126,18 +213,12 @@ type MobileFolderStackParamList = {
 
 type MobileFolderDirectoryRoute = RouteProp<MobileFolderStackParamList, 'directory'>;
 type MobileFolderDirectoryNavigation = NativeStackNavigationProp<MobileFolderStackParamList, 'directory'>;
-type FolderFabIconName = ComponentProps<typeof Ionicons>['name'];
 
 interface MobileFolderDirectoryScreenProps extends MobileFoldersHomeProps {
   navigation: MobileFolderDirectoryNavigation;
   route: MobileFolderDirectoryRoute;
 }
 
-type DirectorySelectionKind = 'file' | 'folder';
-type DirectorySelectionKey = `${DirectorySelectionKind}:${string}`;
-type PreviewImageSource = 'hd' | 'original' | 'thumbnail';
-type PreviewGestureAction = 'close' | 'next' | 'previous';
-type PreviewMode = 'original' | 'thumbnail';
 type PreviewBusyAction = 'album' | 'delete' | 'favorite' | 'refresh' | 'share';
 
 interface ProgressiveImagePreviewProps {
@@ -149,163 +230,6 @@ interface ProgressiveImagePreviewProps {
   thumbnailSource?: string;
 }
 
-interface PreviewSettingRowProps {
-  active: boolean;
-  disabled?: boolean;
-  icon: FolderFabIconName;
-  label: string;
-  meta: string;
-  onPress?: () => void;
-}
-
-interface PreviewMorePanelProps {
-  busy: boolean;
-  onRefreshDescriptor: () => void;
-  onRefreshInfo: () => void;
-  onRefreshThumbs: () => void;
-}
-
-interface PreviewImageGalleryItem {
-  file: FolderFileSummary;
-  thumbnailUri?: string;
-  uri: string;
-}
-
-interface SelectionItem {
-  file?: FolderFileSummary;
-  folder?: FolderSummary;
-  key: DirectorySelectionKey;
-  kind: DirectorySelectionKind;
-}
-
-type DirectoryListItem =
-  | { key: string; type: 'initial-loading' }
-  | { key: string; type: 'folder-heading' }
-  | { key: string; type: 'folder-empty' }
-  | { folders: FolderSummary[]; key: string; placeholderCount: number; type: 'folder-row' }
-  | { count: number; key: string; type: 'file-heading' }
-  | { key: string; type: 'file-empty' }
-  | { group: FolderFileGroup; key: string; type: 'file-group-heading' }
-  | { file: FolderFileSummary; key: string; type: 'media-file' }
-  | { files: FolderFileSummary[]; key: string; placeholderCount: number; type: 'normal-file-row' };
-
-interface PathItem {
-  id?: number;
-  isRoot?: boolean;
-  name: string;
-}
-
-const DEFAULT_SORT_FIELD: MobileFolderSortField = 'tokenAt';
-const DEFAULT_SORT_DIRECTION: MobileFolderSortDirection = 'DESC';
-const DEFAULT_VIEW_MODE: MobileFolderViewMode = 'list';
-const DEFAULT_CARD_SIZE: MobileFolderCardSize = 'medium';
-const DIRECTORY_FLASH_LIST_DRAW_DISTANCE = 900;
-const DIRECTORY_PULL_REFRESH_REVEAL_DISTANCE = 18;
-const DIRECTORY_PULL_REFRESH_TRIGGER_DISTANCE = 72;
-const LONG_PRESS_DELAY_MS = 520;
-const MAX_FOLDER_COVER_COUNT = 4;
-const PREVIEW_NEIGHBOR_PRELOAD_RADIUS = 3;
-const PREVIEW_NOTICE_DURATION_MS = 2200;
-const PREVIEW_SWIPE_CLOSE_DISTANCE = 90;
-const PREVIEW_SWIPE_DIRECTION_RATIO = 1.3;
-const PREVIEW_SWIPE_STEP_DISTANCE = 70;
-const STATUS_COPY: Record<FolderSummary['status'], string> = {
-  empty: '空文件夹',
-  ready: '可浏览',
-  scanning: '扫描中',
-};
-const SORT_FIELD_LABEL: Record<MobileFolderSortField, string> = {
-  fileName: '文件名',
-  fileType: '类型',
-  mtime: '修改时间',
-  size: '大小',
-  tokenAt: '拍摄时间',
-};
-const SORT_FIELD_OPTIONS: MobileFolderSortField[] = ['tokenAt', 'mtime', 'fileName', 'size', 'fileType'];
-const SYNTHETIC_SORT_FILE_GROUP_LABELS = new Set(
-  SORT_FIELD_OPTIONS.map((field) => `${SORT_FIELD_LABEL[field]}排序`),
-);
-const SORT_DIRECTION_LABEL: Record<MobileFolderSortDirection, string> = {
-  ASC: '升序',
-  DESC: '降序',
-};
-const SORT_DIRECTION_OPTIONS: MobileFolderSortDirection[] = ['DESC', 'ASC'];
-const VIEW_MODE_OPTIONS: Array<{
-  icon: FolderFabIconName;
-  label: string;
-  meta: string;
-  value: MobileFolderViewMode;
-}> = [
-  { icon: 'grid-outline', label: '宫格', meta: '封面浏览', value: 'grid' },
-  { icon: 'list-outline', label: '列表', meta: '信息密度', value: 'list' },
-];
-const CARD_SIZE_OPTIONS: Array<{
-  icon: FolderFabIconName;
-  label: string;
-  meta: string;
-  value: MobileFolderCardSize;
-}> = [
-  { icon: 'remove-outline', label: '小', meta: '紧凑', value: 'small' },
-  { icon: 'resize-outline', label: '中', meta: '默认', value: 'medium' },
-  { icon: 'expand-outline', label: '大', meta: '沉浸', value: 'large' },
-];
-const SORT_FIELD_ICON: Record<MobileFolderSortField, FolderFabIconName> = {
-  fileName: 'text-outline',
-  fileType: 'albums-outline',
-  mtime: 'time-outline',
-  size: 'file-tray-full-outline',
-  tokenAt: 'calendar-outline',
-};
-const SORT_DIRECTION_ICON: Record<MobileFolderSortDirection, FolderFabIconName> = {
-  ASC: 'arrow-up-outline',
-  DESC: 'arrow-down-outline',
-};
-const MOVE_OVERWRITE_OPTIONS: Array<{ label: string; value: FileMoveOverwriteMode }> = [
-  { label: '自动重命名', value: 2 },
-  { label: '跳过冲突', value: 0 },
-  { label: '覆盖文件', value: 1 },
-];
-const FOLDER_GRID_GAP = 8;
-const FOLDER_GRID_COLUMN_COUNT: Record<MobileFolderCardSize, number> = {
-  large: 1,
-  medium: 2,
-  small: 3,
-};
-const VIDEO_TYPES = new Set(['MP4', 'MOV', 'WEBM', 'M4V', 'MKV', 'AVI', 'FLV', 'MTS', 'M2TS']);
-const VIDEO_FALLBACK_ASPECT_RATIO = 16 / 9;
-const DIRECT_VIDEO_PREVIEW_TYPES = new Set(['MP4', 'MOV', 'M4V']);
-const VIDEO_TYPE_KEYWORDS = [
-  'video',
-  'mp4',
-  'mov',
-  'm4v',
-  'webm',
-  'ogg',
-  'ogv',
-  'avi',
-  'mkv',
-  'flv',
-  'mts',
-  'm2ts',
-  '3gp',
-  'quicktime',
-];
-const COVER_IMAGE_TYPES = new Set([
-  'AVIF',
-  'BMP',
-  'GIF',
-  'HEIC',
-  'HEIF',
-  'IMAGE',
-  'JPEG',
-  'JPG',
-  'PNG',
-  'TIF',
-  'TIFF',
-  'WEBP',
-]);
-const FORBIDDEN_FOLDER_NAME_PATTERN = /[\\/:*?"<>|]/;
-const FOLDER_GESTURE_RESPONSE_DISTANCE = 28;
 const FolderStack = createNativeStackNavigator<MobileFolderStackParamList>();
 const FOLDER_NAVIGATION_THEME: Theme = {
   ...DefaultTheme,
@@ -872,6 +796,7 @@ const MobileFolderDirectoryScreen = ({
     enabled: cacheEnabled && Boolean(previewFile),
     fileId: previewFile?.id,
     folder: cacheFolder,
+    instantNetworkFallback: true,
     kind: 'file-thumbnail',
     md5: previewFile?.md5,
     sourceUrl: previewFile ? previewListThumbnailUrl : undefined,
@@ -882,6 +807,7 @@ const MobileFolderDirectoryScreen = ({
     enabled: cacheEnabled && Boolean(previewFile && !previewIsVideo),
     fileId: previewFile?.id,
     folder: cacheFolder,
+    instantNetworkFallback: true,
     kind: 'file-hd-thumbnail',
     md5: previewFile?.md5,
     sourceUrl: previewFile && !previewIsVideo ? previewHdImageUrl : undefined,
@@ -892,6 +818,7 @@ const MobileFolderDirectoryScreen = ({
     enabled: cacheEnabled && Boolean(previewFile && !previewIsVideo),
     fileId: previewFile?.id,
     folder: cacheFolder,
+    instantNetworkFallback: true,
     kind: 'image-preview',
     md5: previewFile?.md5,
     sourceUrl: previewFile && !previewIsVideo ? previewOriginalUrl : undefined,
@@ -901,6 +828,7 @@ const MobileFolderDirectoryScreen = ({
     enabled: cacheEnabled && Boolean(previewFile && previewIsVideo && previewMode === 'original'),
     fileId: previewFile?.id,
     folder: cacheFolder,
+    instantNetworkFallback: true,
     kind: 'video-preview',
     md5: previewFile?.md5,
     sourceUrl: previewFile && previewIsVideo && previewMode === 'original' ? previewVideoPlaybackUrl : undefined,
@@ -2060,6 +1988,7 @@ const MobileFolderDirectoryScreen = ({
 
   const previewPanResponder = useMemo(
     () => PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_event, gestureState) => shouldCapturePreviewGesture(gestureState),
       onMoveShouldSetPanResponder: (_event, gestureState) => shouldCapturePreviewGesture(gestureState),
       onPanResponderRelease: (_event, gestureState) => {
         const action = getPreviewGestureAction(gestureState);
@@ -2725,10 +2654,8 @@ const MobileFolderDirectoryScreen = ({
         />
       ) : null}
 
-      <Modal
-        animationType="fade"
-        onRequestClose={closePreview}
-        transparent
+      <MobileFullscreenModal
+        onClose={closePreview}
         visible={Boolean(previewFile && !previewUsesImageViewer)}
       >
         <View {...previewPanResponder.panHandlers} style={[styles.previewOverlay, previewSafeAreaStyle]}>
@@ -2737,6 +2664,7 @@ const MobileFolderDirectoryScreen = ({
             previewMode === 'original' ? (
               <InlineVideoPreview
                 onFirstFrame={previewVideoCache.rememberLoadedResource}
+                posterUri={previewListThumbnailCache.displayUri}
                 sourceUri={previewVideoCache.displayUri}
               />
             ) : previewListThumbnailCache.displayUri ? (
@@ -2812,7 +2740,7 @@ const MobileFolderDirectoryScreen = ({
             </Pressable>
           </View>
         </View>
-      </Modal>
+      </MobileFullscreenModal>
 
       <PreviewAlbumDialog
         albumIds={previewAlbumIds}
@@ -2993,9 +2921,12 @@ const FolderConfigSheet = ({
   const activePanelStyle = { backgroundColor: theme.selection, borderColor: theme.light };
 
   return (
-    <Modal animationType="slide" onRequestClose={onClose} transparent visible={open}>
-      <Pressable onPress={onClose} style={styles.configOverlay}>
-        <Pressable onPress={(event) => event.stopPropagation()} style={styles.configSheet}>
+    <MobileBottomSheetModal
+      backdropStyle={styles.configOverlay}
+      contentStyle={styles.configSheet}
+      onClose={onClose}
+      visible={open}
+    >
           <View style={styles.configSheetHandle} />
           <View style={styles.configHeader}>
             <View style={[styles.configHeaderIcon, { backgroundColor: theme.selection }]}>
@@ -3101,9 +3032,7 @@ const FolderConfigSheet = ({
               ))}
             </View>
           </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </MobileBottomSheetModal>
   );
 };
 
@@ -3352,11 +3281,14 @@ const PreviewThumbnailWarmup = ({ sources }: { sources: string[] }) => {
  */
 const InlineVideoPreview = ({
   onFirstFrame,
+  posterUri,
   sourceUri,
 }: {
   onFirstFrame: () => void;
+  posterUri?: string;
   sourceUri?: string;
 }) => {
+  const [firstFrameRendered, setFirstFrameRendered] = useState(false);
   const player = useVideoPlayer(null, (createdPlayer) => {
     createdPlayer.allowsExternalPlayback = false;
     createdPlayer.loop = false;
@@ -3364,6 +3296,8 @@ const InlineVideoPreview = ({
 
   useEffect(() => {
     let cancelled = false;
+
+    setFirstFrameRendered(false);
 
     const safelyPausePlayer = (): void => {
       try {
@@ -3414,10 +3348,18 @@ const InlineVideoPreview = ({
         contentFit="contain"
         fullscreenOptions={{ enable: true }}
         nativeControls
-        onFirstFrameRender={onFirstFrame}
+        onFirstFrameRender={() => {
+          setFirstFrameRendered(true);
+          onFirstFrame();
+        }}
         player={player}
         style={styles.previewVideo}
       />
+      {posterUri && !firstFrameRendered ? (
+        <View pointerEvents="none" style={styles.previewVideoPoster}>
+          <Image resizeMode="contain" source={{ uri: posterUri }} style={styles.previewVideoPosterImage} />
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -3480,236 +3422,6 @@ const ProgressiveImagePreview = ({
   );
 };
 
-const PreviewToolbarButton = ({
-  active = false,
-  busy = false,
-  disabled = false,
-  icon,
-  label,
-  onPress,
-}: {
-  active?: boolean;
-  busy?: boolean;
-  disabled?: boolean;
-  icon: FolderFabIconName;
-  label: string;
-  onPress: () => void;
-}) => {
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      disabled={disabled || busy}
-      onPress={onPress}
-      style={[
-        styles.previewToolButton,
-        active ? styles.previewToolButtonActive : null,
-        disabled || busy ? styles.previewToolButtonDisabled : null,
-      ]}
-    >
-      {busy ? (
-        <ActivityIndicator color="#fff" size="small" />
-      ) : (
-        <Ionicons color="#fff" name={icon} size={20} />
-      )}
-    </Pressable>
-  );
-};
-
-/**
- * Renders the preview more menu as an in-app floating panel instead of a native alert.
- */
-const PreviewMorePanel = ({
-  busy,
-  onRefreshDescriptor,
-  onRefreshInfo,
-  onRefreshThumbs,
-}: PreviewMorePanelProps) => {
-  return (
-    <View style={styles.previewMorePanel}>
-      <PreviewMoreButton
-        disabled={busy}
-        icon="scan-outline"
-        label="刷新人脸识别"
-        onPress={onRefreshDescriptor}
-      />
-      <PreviewMoreButton
-        disabled={busy}
-        icon="images-outline"
-        label="刷新缩略图"
-        onPress={onRefreshThumbs}
-      />
-      <PreviewMoreButton
-        disabled={busy}
-        icon="information-circle-outline"
-        label="刷新 EXIF 信息"
-        onPress={onRefreshInfo}
-      />
-    </View>
-  );
-};
-
-const PreviewMoreButton = ({
-  disabled = false,
-  icon,
-  label,
-  onPress,
-}: {
-  disabled?: boolean;
-  icon: FolderFabIconName;
-  label: string;
-  onPress: () => void;
-}) => (
-  <Pressable
-    accessibilityLabel={label}
-    disabled={disabled}
-    onPress={onPress}
-    style={[styles.previewMoreButton, disabled ? styles.previewToolButtonDisabled : null]}
-  >
-    <Ionicons color={MOBILE_SAGE_SLATE.muted} name={icon} size={18} />
-    <Text style={styles.previewMoreButtonText}>{label}</Text>
-  </Pressable>
-);
-
-const PreviewSettingsPanel = ({
-  actionDisabled,
-  actionLabel,
-  cacheLabel,
-  hdReady,
-  imageSource,
-  isVideo,
-  mode,
-  onClose,
-  onToggleMode,
-  videoUsesTranscode,
-  videoPreparing,
-}: {
-  actionDisabled: boolean;
-  actionLabel: string;
-  cacheLabel: string;
-  hdReady: boolean;
-  imageSource: PreviewImageSource;
-  isVideo: boolean;
-  mode: PreviewMode;
-  onClose: () => void;
-  onToggleMode: () => void;
-  videoUsesTranscode: boolean;
-  videoPreparing: boolean;
-}) => {
-  const theme = useMobileTheme();
-
-  return (
-    <View style={[styles.previewSettingsPanel, { borderColor: theme.selection }, MOBILE_SAGE_SHADOWS.floating]}>
-      <View style={styles.previewSettingsHeader}>
-        <View>
-          <Text style={styles.previewSettingsTitle}>显示设置</Text>
-          <Text style={styles.previewSettingsMeta}>当前来源：{cacheLabel}</Text>
-        </View>
-        <Pressable onPress={onClose} style={styles.previewSettingsClose}>
-          <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close" size={18} />
-        </Pressable>
-      </View>
-      <PreviewSettingRow
-        active={!isVideo}
-        icon="sparkles-outline"
-        label="图片 - 优先加载高清图："
-        meta={hdReady ? '高清预览图已显示' : '先显示列表缩略图，高清图获取到后自动切换'}
-      />
-      <PreviewSettingRow
-        active={!isVideo && imageSource === 'original'}
-        disabled={isVideo || actionDisabled}
-        icon="image-outline"
-        label="图片 - 优先加载原图："
-        meta={isVideo ? '当前文件为视频，不使用图片原图设置' : (imageSource === 'original' ? '当前优先使用原图缓存' : actionLabel)}
-        onPress={!isVideo ? onToggleMode : undefined}
-      />
-      <PreviewSettingRow
-        active={!isVideo}
-        icon="resize-outline"
-        label="图片 - 优化长图显示："
-        meta="保持完整比例，不裁切长图"
-      />
-      <PreviewSettingRow
-        active={isVideo && mode === 'original'}
-        disabled={!isVideo || actionDisabled}
-        icon="play-circle-outline"
-        label="视频 - 自动播放视频："
-        meta={!isVideo ? '当前文件为图片，不使用视频设置' : (videoPreparing ? '正在准备视频转码预览' : '点击后进入应用内视频预览')}
-        onPress={isVideo ? onToggleMode : undefined}
-      />
-      <PreviewSettingRow
-        active={isVideo && videoUsesTranscode}
-        icon="film-outline"
-        label="视频 - 优先使用转码版本："
-        meta={videoUsesTranscode ? '当前格式使用转码预览' : '仅直连不支持时使用转码预览'}
-      />
-      <PreviewSettingRow
-        active={false}
-        icon="open-outline"
-        label="视频 - 外部播放器："
-        meta="不显示，所有媒体保持应用内预览"
-      />
-    </View>
-  );
-};
-
-/**
- * Renders one official-style preview setting row with a compact status switch.
- */
-const PreviewSettingRow = ({
-  active,
-  disabled = false,
-  icon,
-  label,
-  meta,
-  onPress,
-}: PreviewSettingRowProps) => {
-  const theme = useMobileTheme();
-  const content = (
-    <>
-      <View style={[
-        styles.previewSettingIcon,
-        active ? styles.previewSettingIconActive : null,
-        active ? { backgroundColor: theme.hex } : null,
-      ]}>
-        <Ionicons color={active ? '#fff' : MOBILE_SAGE_SLATE.subtle} name={icon} size={17} />
-      </View>
-      <View style={styles.previewSettingCopy}>
-        <Text style={styles.previewSettingTitle}>{label}</Text>
-        <Text style={styles.previewSettingMeta}>{meta}</Text>
-      </View>
-      <View style={[
-        styles.previewSettingSwitch,
-        active ? styles.previewSettingSwitchActive : null,
-        active ? { backgroundColor: theme.hex } : null,
-      ]}>
-        <View style={[styles.previewSettingSwitchThumb, active ? styles.previewSettingSwitchThumbActive : null]} />
-      </View>
-    </>
-  );
-
-  if (!onPress) {
-    return (
-      <View style={[styles.previewSettingRow, active ? styles.previewSettingRowActive : null]}>
-        {content}
-      </View>
-    );
-  }
-
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={[
-        styles.previewSettingRow,
-        active ? styles.previewSettingRowActive : null,
-        disabled ? styles.previewSettingRowDisabled : null,
-      ]}
-    >
-      {content}
-    </Pressable>
-  );
-};
-
 const PreviewAlbumDialog = ({
   albumIds,
   albums,
@@ -3730,9 +3442,12 @@ const PreviewAlbumDialog = ({
   open: boolean;
 }) => {
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible={open}>
-      <View style={styles.dialogOverlay}>
-        <View style={styles.previewAlbumDialog}>
+    <MobileCenterDialog
+      backdropStyle={styles.dialogOverlay}
+      contentStyle={styles.previewAlbumDialog}
+      onClose={onClose}
+      visible={open}
+    >
           <View style={styles.previewAlbumHeader}>
             <View>
               <Text style={styles.dialogTitle}>添加到相册</Text>
@@ -3778,9 +3493,7 @@ const PreviewAlbumDialog = ({
               );
             })}
           </ScrollView>
-        </View>
-      </View>
-    </Modal>
+    </MobileCenterDialog>
   );
 };
 
@@ -3988,56 +3701,49 @@ const FolderCard = ({
             <Text style={[styles.folderActionsToggleText, actionsOpen ? { color: theme.hex } : null]}>⋯</Text>
           </Pressable>
         </View>
-        <Modal
-          animationType="fade"
-          onRequestClose={() => setActionsOpen(false)}
-          transparent
+        <MobileCenterDialog
+          backdropStyle={styles.folderActionSheetOverlay}
+          contentStyle={styles.folderActionSheet}
+          onClose={() => setActionsOpen(false)}
           visible={actionsOpen}
         >
-          <Pressable style={styles.folderActionSheetOverlay} onPress={() => setActionsOpen(false)}>
-            <Pressable
-              onPress={(event) => event.stopPropagation()}
-              style={styles.folderActionSheet}
-            >
-              <View style={styles.folderActionSheetHeader}>
-                <Text numberOfLines={1} style={styles.folderActionSheetTitle}>{folder.name}</Text>
-                <Pressable onPress={() => setActionsOpen(false)} style={styles.folderActionSheetClose}>
-                  <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close" size={18} />
-                </Pressable>
-              </View>
-              <Pressable
-                onPress={() => {
-                  setActionsOpen(false);
-                  onRename();
-                }}
-                style={({ pressed }) => [
-                  styles.folderActionSheetButton,
-                  pressed ? { backgroundColor: theme.selection, borderColor: theme.hex } : null,
-                ]}
-              >
-                <View style={[styles.folderActionSheetIcon, { backgroundColor: theme.selection }]}>
-                  <Ionicons color={theme.hex} name="pencil-outline" size={17} />
-                </View>
-                <Text style={styles.folderActionSheetButtonText}>重命名</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setActionsOpen(false);
-                  onSetCover();
-                }}
-                style={({ pressed }) => [
-                  styles.folderActionSheetButton,
-                  pressed ? { backgroundColor: theme.selection, borderColor: theme.hex } : null,
-                ]}
-              >
-                <View style={[styles.folderActionSheetIcon, { backgroundColor: theme.selection }]}>
-                  <Ionicons color={theme.hex} name="image-outline" size={17} />
-                </View>
-                <Text style={styles.folderActionSheetButtonText}>设封面</Text>
-              </Pressable>
+          <View style={styles.folderActionSheetHeader}>
+            <Text numberOfLines={1} style={styles.folderActionSheetTitle}>{folder.name}</Text>
+            <Pressable onPress={() => setActionsOpen(false)} style={styles.folderActionSheetClose}>
+              <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close" size={18} />
             </Pressable>
+          </View>
+          <Pressable
+            onPress={() => {
+              setActionsOpen(false);
+              onRename();
+            }}
+            style={({ pressed }) => [
+              styles.folderActionSheetButton,
+              pressed ? { backgroundColor: theme.selection, borderColor: theme.hex } : null,
+            ]}
+          >
+            <View style={[styles.folderActionSheetIcon, { backgroundColor: theme.selection }]}>
+              <Ionicons color={theme.hex} name="pencil-outline" size={17} />
+            </View>
+            <Text style={styles.folderActionSheetButtonText}>重命名</Text>
           </Pressable>
-        </Modal>
+          <Pressable
+            onPress={() => {
+              setActionsOpen(false);
+              onSetCover();
+            }}
+            style={({ pressed }) => [
+              styles.folderActionSheetButton,
+              pressed ? { backgroundColor: theme.selection, borderColor: theme.hex } : null,
+            ]}
+          >
+            <View style={[styles.folderActionSheetIcon, { backgroundColor: theme.selection }]}>
+              <Ionicons color={theme.hex} name="image-outline" size={17} />
+            </View>
+            <Text style={styles.folderActionSheetButtonText}>设封面</Text>
+          </Pressable>
+        </MobileCenterDialog>
         {showFolderMeta && !shouldMergeFolderMeta ? (
           <View style={styles.folderMeta}>
             <Text style={styles.folderMetaText}>{folder.childCount} 个子文件夹</Text>
@@ -4329,81 +4035,40 @@ const FolderNameDialog = ({
   const theme = useMobileTheme();
 
   return (
-    <Modal
-      animationType="fade"
-      onRequestClose={onCancel}
-      transparent
+    <MobileCenterDialog
+      avoidKeyboard
+      backdropStyle={styles.dialogOverlay}
+      contentStyle={styles.dialog}
+      onClose={onCancel}
       visible={Boolean(mode)}
     >
-      <View style={styles.dialogOverlay}>
-        <View style={styles.dialog}>
-          <Text style={styles.dialogTitle}>{mode === 'rename' ? '重命名文件夹' : '新建文件夹'}</Text>
-          <Text style={styles.dialogDescription}>
-            {mode === 'rename' ? '输入新的文件夹名称。' : '在当前目录下创建一个新文件夹。'}
-          </Text>
-          <TextInput
-            autoCapitalize="none"
-            editable={!submitting}
-            onChangeText={onChangeName}
-            placeholder="文件夹名称"
-            placeholderTextColor={MOBILE_SAGE_SLATE.subtle}
-            style={styles.dialogInput}
-            value={name}
-          />
-          {error ? <Text style={styles.dialogError}>{error}</Text> : null}
-          <View style={styles.dialogActions}>
-            <Pressable disabled={submitting} onPress={onCancel} style={styles.dialogSecondaryButton}>
-              <Text style={styles.dialogSecondaryText}>取消</Text>
-            </Pressable>
-            <Pressable
-              disabled={submitting}
-              onPress={() => void onSubmit()}
-              style={[styles.dialogPrimaryButton, { backgroundColor: theme.hex }, submitting ? styles.disabledButton : null]}
-            >
-              <Text style={styles.dialogPrimaryText}>{submitting ? '处理中' : '确定'}</Text>
-            </Pressable>
-          </View>
-        </View>
+      <Text style={styles.dialogTitle}>{mode === 'rename' ? '重命名文件夹' : '新建文件夹'}</Text>
+      <Text style={styles.dialogDescription}>
+        {mode === 'rename' ? '输入新的文件夹名称。' : '在当前目录下创建一个新文件夹。'}
+      </Text>
+      <TextInput
+        autoCapitalize="none"
+        editable={!submitting}
+        onChangeText={onChangeName}
+        placeholder="文件夹名称"
+        placeholderTextColor={MOBILE_SAGE_SLATE.subtle}
+        style={styles.dialogInput}
+        value={name}
+      />
+      {error ? <Text style={styles.dialogError}>{error}</Text> : null}
+      <View style={styles.dialogActions}>
+        <Pressable disabled={submitting} onPress={onCancel} style={styles.dialogSecondaryButton}>
+          <Text style={styles.dialogSecondaryText}>取消</Text>
+        </Pressable>
+        <Pressable
+          disabled={submitting}
+          onPress={() => void onSubmit()}
+          style={[styles.dialogPrimaryButton, { backgroundColor: theme.hex }, submitting ? styles.disabledButton : null]}
+        >
+          <Text style={styles.dialogPrimaryText}>{submitting ? '处理中' : '确定'}</Text>
+        </Pressable>
       </View>
-    </Modal>
-  );
-};
-
-const PreviewDetailPanel = ({
-  detail,
-  error,
-  file,
-  loading,
-}: {
-  detail?: FileDetail;
-  error: string;
-  file?: FolderFileSummary;
-  loading: boolean;
-}) => {
-  const theme = useMobileTheme();
-
-  if (!file) {
-    return null;
-  }
-
-  const rows = createPreviewDetailRows(file, detail);
-
-  return (
-    <View style={styles.previewInfoPanel}>
-      <View style={styles.previewInfoHeader}>
-        <Text style={styles.previewInfoTitle}>文件信息</Text>
-        {loading ? <ActivityIndicator color={theme.light} size="small" /> : null}
-      </View>
-      {error ? <Text style={styles.previewInfoError}>{error}</Text> : null}
-      <View style={styles.previewInfoRows}>
-        {rows.map((row) => (
-          <View key={row.label} style={styles.previewInfoRow}>
-            <Text style={styles.previewInfoLabel}>{row.label}</Text>
-            <Text numberOfLines={1} style={styles.previewInfoValue}>{row.value}</Text>
-          </View>
-        ))}
-      </View>
-    </View>
+    </MobileCenterDialog>
   );
 };
 
@@ -4457,9 +4122,12 @@ const FolderCoverDialog = ({
   const disabled = loading || autoSubmitting || submitting;
 
   return (
-    <Modal animationType="slide" onRequestClose={onClose} transparent visible={Boolean(folder)}>
-      <View style={styles.dialogOverlay}>
-        <View style={styles.dialogLarge}>
+    <MobileBottomSheetModal
+      backdropStyle={styles.dialogBottomOverlay}
+      contentStyle={styles.dialogLarge}
+      onClose={onClose}
+      visible={Boolean(folder)}
+    >
           <Text style={styles.dialogTitle}>设置文件夹封面</Text>
           <Text style={styles.dialogDescription}>
             {folder.name} · 从文件夹内选择最多 {MAX_FOLDER_COVER_COUNT} 张图片作为封面拼贴。
@@ -4573,9 +4241,7 @@ const FolderCoverDialog = ({
               <Text style={styles.dialogPrimaryText}>{submitting ? '保存中' : '保存封面'}</Text>
             </Pressable>
           </View>
-        </View>
-      </View>
-    </Modal>
+    </MobileBottomSheetModal>
   );
 };
 
@@ -4616,9 +4282,12 @@ const BatchMoveDialog = ({
   const disabled = loading || submitting;
 
   return (
-    <Modal animationType="slide" onRequestClose={onClose} transparent visible={open}>
-      <View style={styles.dialogOverlay}>
-        <View style={styles.dialogLarge}>
+    <MobileBottomSheetModal
+      backdropStyle={styles.dialogBottomOverlay}
+      contentStyle={styles.dialogLarge}
+      onClose={onClose}
+      visible={open}
+    >
           <Text style={styles.dialogTitle}>移动所选内容</Text>
           <Text style={styles.dialogDescription}>{selectedSummary} · 选择目标文件夹后执行移动。</Text>
           <View style={styles.dialogToolbarRow}>
@@ -4711,9 +4380,7 @@ const BatchMoveDialog = ({
               <Text style={styles.dialogPrimaryText}>{submitting ? '移动中' : '确认移动'}</Text>
             </Pressable>
           </View>
-        </View>
-      </View>
-    </Modal>
+    </MobileBottomSheetModal>
   );
 };
 
@@ -4795,690 +4462,6 @@ const PathPillRow = ({
 
 const EmptyLine = ({ text }: { text: string }) => {
   return <Text style={styles.emptyText}>{text}</Text>;
-};
-
-/**
- * Flattens the directory into virtual-list rows so thumbnails can be enabled by row viewability.
- */
-const createDirectoryListItems = ({
-  cardSize,
-  directory,
-  folderColumnCount,
-  initialLoading,
-  viewMode,
-}: {
-  cardSize: MobileFolderCardSize;
-  directory?: FolderDirectory;
-  folderColumnCount: number;
-  initialLoading: boolean;
-  viewMode: MobileFolderViewMode;
-}): DirectoryListItem[] => {
-  if (initialLoading) {
-    return [{ key: 'initial-loading', type: 'initial-loading' }];
-  }
-
-  if (!directory) {
-    return [];
-  }
-
-  const folderRows = chunkFolderGridRows(directory.folders, folderColumnCount);
-  const fileCount = directory.files.reduce((sum, group) => sum + group.list.length, 0);
-  const normalColumnCount = viewMode === 'list' ? 1 : FOLDER_GRID_COLUMN_COUNT[cardSize];
-
-  return [
-    { key: 'folder-heading', type: 'folder-heading' },
-    ...(folderRows.length > 0
-      ? folderRows.map((folders, index) => ({
-          folders,
-          key: `folder-row-${index}-${folders.map((folder) => folder.id || folder.path).join('-')}`,
-          placeholderCount: Math.max(0, folderColumnCount - folders.length),
-          type: 'folder-row' as const,
-        }))
-      : [{ key: 'folder-empty', type: 'folder-empty' as const }]),
-    { count: fileCount, key: 'file-heading', type: 'file-heading' },
-    ...(directory.files.length > 0
-      ? directory.files.flatMap((group, groupIndex) => {
-          const groupKey = createFileGroupListKey(group, groupIndex);
-          const mediaFiles = group.list.filter(isMediaFile);
-          const normalRows = chunkFileGridRows(
-            group.list.filter((file) => !isMediaFile(file)),
-            normalColumnCount,
-          );
-
-          return [
-            ...(shouldRenderFileGroupHeading(group)
-              ? [{ group, key: `file-group-heading-${groupKey}`, type: 'file-group-heading' as const }]
-              : []),
-            ...mediaFiles.map((file, fileIndex) => ({
-              file,
-              key: `media-file-${groupKey}-${fileIndex}-${createFileThumbnailKey(file)}`,
-              type: 'media-file' as const,
-            })),
-            ...normalRows.map((files, rowIndex) => ({
-              files,
-              key: `normal-file-row-${groupKey}-${rowIndex}-${files.map(createFileThumbnailKey).join('-')}`,
-              placeholderCount: Math.max(0, normalColumnCount - files.length),
-              type: 'normal-file-row' as const,
-            })),
-          ];
-        })
-      : [{ key: 'file-empty', type: 'file-empty' as const }]),
-  ];
-};
-
-/**
- * Creates a stable virtual-list key for one backend file group.
- */
-const createFileGroupListKey = (group: FolderFileGroup, index: number): string => {
-  return `${index}-${group.day}-${group.addr ?? ''}-${group.list.length}`;
-};
-
-/**
- * Hides synthetic "X排序" groups because the file section already owns that summary row.
- */
-const shouldRenderFileGroupHeading = (group: FolderFileGroup): boolean => {
-  return Boolean(group.addr || !isSyntheticSortFileGroup(group));
-};
-
-/**
- * Detects the single aggregate group produced when files are sorted by non-date fields.
- */
-const isSyntheticSortFileGroup = (group: FolderFileGroup): boolean => {
-  return SYNTHETIC_SORT_FILE_GROUP_LABELS.has(group.day);
-};
-
-/**
- * Creates a stable key for enabling one file thumbnail near the viewport.
- */
-const createFileThumbnailKey = (file: FolderFileSummary): string => {
-  return `file:${file.id || file.md5 || file.name}:${file.md5}:${isVideoFile(file) ? 'poster' : 'h220'}`;
-};
-
-/**
- * Splits non-media files into full-width rows while FlashList handles media masonry cells.
- */
-const chunkFileGridRows = (files: FolderFileSummary[], columnCount: number): FolderFileSummary[][] => {
-  const safeColumnCount = Math.max(1, columnCount);
-  const rows: FolderFileSummary[][] = [];
-
-  for (let index = 0; index < files.length; index += safeColumnCount) {
-    rows.push(files.slice(index, index + safeColumnCount));
-  }
-
-  return rows;
-};
-
-/**
- * Picks the nearby gallery entries that should be ready before the user swipes.
- */
-const getPreviewWarmThumbnailItems = (
-  items: PreviewImageGalleryItem[],
-  currentIndex: number,
-  radius: number,
-): PreviewImageGalleryItem[] => {
-  const startIndex = Math.max(0, currentIndex - radius);
-  const endIndex = Math.min(items.length - 1, currentIndex + radius);
-
-  return items
-    .slice(startIndex, endIndex + 1)
-    .filter((_item, index) => startIndex + index !== currentIndex);
-};
-
-/**
- * Resolves and warms one list thumbnail so the fullscreen carousel can paint it immediately.
- */
-const warmPreviewThumbnailUri = async ({
-  cacheEnabled,
-  cacheFolder,
-  item,
-}: {
-  cacheEnabled: boolean;
-  cacheFolder: MobileLocalCacheFolderRef;
-  item: PreviewImageGalleryItem;
-}): Promise<string | undefined> => {
-  const sourceUrl = item.thumbnailUri ?? item.uri;
-
-  if (!sourceUrl) {
-    return undefined;
-  }
-
-  let displayUri = sourceUrl;
-
-  if (cacheEnabled && item.thumbnailUri) {
-    const cacheParams = {
-      fileId: item.file.id,
-      folder: cacheFolder,
-      kind: 'file-thumbnail' as const,
-      md5: item.file.md5,
-      url: item.thumbnailUri,
-      variant: 'h220',
-    };
-    const cachedUri = await readCachedMobileMediaUri(cacheParams);
-    const downloadedUri = cachedUri ? undefined : await cacheMobileMediaResourceFromUrl(cacheParams);
-
-    displayUri = cachedUri ?? downloadedUri ?? sourceUrl;
-  }
-
-  await Image.prefetch(displayUri).catch(() => false);
-  return displayUri;
-};
-
-/**
- * Avoids state churn when warm thumbnail entries resolve to the same URI set.
- */
-const isSameStringRecord = (left: Record<string, string>, right: Record<string, string>): boolean => {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
-};
-
-const createEmptyDirectory = (): FolderDirectory => {
-  return {
-    breadcrumbs: [],
-    files: [],
-    folders: [],
-    path: '',
-    trashCount: 0,
-  };
-};
-
-const formatSelectionSummary = (folderCount: number, fileCount: number): string => {
-  return `${folderCount} 个文件夹，${fileCount} 个文件`;
-};
-
-const getCoverCandidateFiles = (directory: FolderDirectory): FolderFileSummary[] => {
-  return directory.files
-    .flatMap((group) => group.list)
-    .filter(isCoverCandidateFile);
-};
-
-const isCoverCandidateFile = (file: FolderFileSummary): boolean => {
-  if (!file.md5 || isVideoFile(file)) {
-    return false;
-  }
-
-  return COVER_IMAGE_TYPES.has(file.fileType) || Boolean(file.width && file.height);
-};
-
-/**
- * Detects image files that can be rendered as media-only folder list items.
- */
-const isImageFile = (file: FolderFileSummary): boolean => {
-  if (isVideoFile(file)) {
-    return false;
-  }
-
-  return COVER_IMAGE_TYPES.has(normalizePreviewFileType(file.fileType)) || Boolean(file.width && file.height);
-};
-
-/**
- * Detects media files that should use the borderless waterfall layout.
- */
-const isMediaFile = (file: FolderFileSummary): boolean => {
-  return isImageFile(file) || isVideoFile(file);
-};
-
-/**
- * Returns the original media aspect ratio when the backend provides reliable dimensions.
- */
-const getMediaAspectRatio = (file: FolderFileSummary): number | undefined => {
-  return getLoadedImageAspectRatio(file.width, file.height);
-};
-
-/**
- * Reads a safe width / height ratio from loaded image metadata.
- */
-const getLoadedImageAspectRatio = (width?: number, height?: number): number | undefined => {
-  if (!width || !height || width <= 0 || height <= 0) {
-    return undefined;
-  }
-
-  return width / height;
-};
-
-/**
- * Keeps videos from flashing as square cards before poster metadata is available.
- */
-const getMediaPlaceholderAspectRatio = (file: FolderFileSummary): number | undefined => {
-  return isVideoFile(file) ? VIDEO_FALLBACK_ASPECT_RATIO : undefined;
-};
-
-/**
- * Maps the existing card density preference to a mobile waterfall column count.
- */
-const getMediaWaterfallColumnCount = (cardSize: MobileFolderCardSize): number => {
-  if (cardSize === 'small') {
-    return 3;
-  }
-
-  if (cardSize === 'large') {
-    return 1;
-  }
-
-  return 2;
-};
-
-/**
- * Creates deterministic folder card dimensions from the measured list width.
- */
-const createFolderCardLayoutStyle = ({
-  cardSize,
-  containerWidth,
-  viewMode,
-}: {
-  cardSize: MobileFolderCardSize;
-  containerWidth: number;
-  viewMode: MobileFolderViewMode;
-}): ViewStyle | undefined => {
-  if (containerWidth <= 0) {
-    return undefined;
-  }
-
-  if (viewMode === 'list') {
-    return {
-      flexBasis: '100%',
-      flexGrow: 0,
-      flexShrink: 0,
-      maxWidth: '100%',
-      width: '100%',
-    };
-  }
-
-  const columnCount = FOLDER_GRID_COLUMN_COUNT[cardSize];
-  const itemWidth = Math.floor((containerWidth - FOLDER_GRID_GAP * (columnCount - 1)) / columnCount);
-
-  return {
-    flexBasis: itemWidth,
-    flexGrow: 0,
-    flexShrink: 0,
-    maxWidth: itemWidth,
-    width: itemWidth,
-  };
-};
-
-/**
- * Keeps the folder grid on the full measured width so column anchors match the section.
- */
-const createFolderGridLayoutStyle = ({
-  cardSize,
-  containerWidth,
-  viewMode,
-}: {
-  cardSize: MobileFolderCardSize;
-  containerWidth: number;
-  viewMode: MobileFolderViewMode;
-}): ViewStyle | undefined => {
-  if (containerWidth <= 0) {
-    return undefined;
-  }
-
-  if (viewMode === 'list') {
-    return { width: '100%' };
-  }
-
-  const columnCount = FOLDER_GRID_COLUMN_COUNT[cardSize];
-  const itemWidth = Math.floor((containerWidth - FOLDER_GRID_GAP * (columnCount - 1)) / columnCount);
-  const trackWidth = itemWidth * columnCount + FOLDER_GRID_GAP * (columnCount - 1);
-
-  return { width: trackWidth };
-};
-
-/**
- * Splits folders into explicit rows so the last row stays left aligned.
- */
-const chunkFolderGridRows = (folders: FolderSummary[], columnCount: number): FolderSummary[][] => {
-  const safeColumnCount = Math.max(1, columnCount);
-  const rows: FolderSummary[][] = [];
-
-  for (let index = 0; index < folders.length; index += safeColumnCount) {
-    rows.push(folders.slice(index, index + safeColumnCount));
-  }
-
-  return rows;
-};
-
-/**
- * Balances media files by estimated visual height so mixed aspect ratios read as a waterfall.
- */
-const buildMediaWaterfallColumns = (
-  files: FolderFileSummary[],
-  columnCount: number,
-): FolderFileSummary[][] => {
-  const safeColumnCount = Math.max(1, columnCount);
-  const columns = Array.from({ length: safeColumnCount }, () => [] as FolderFileSummary[]);
-  const columnHeights = Array.from({ length: safeColumnCount }, () => 0);
-
-  files.forEach((file) => {
-    let targetIndex = 0;
-
-    for (let index = 1; index < columnHeights.length; index += 1) {
-      if (columnHeights[index] < columnHeights[targetIndex]) {
-        targetIndex = index;
-      }
-    }
-
-    columns[targetIndex].push(file);
-    columnHeights[targetIndex] += getMediaWaterfallWeight(file);
-  });
-
-  return columns;
-};
-
-/**
- * Uses inverse aspect ratio as a stable estimate of item height in a same-width column.
- */
-const getMediaWaterfallWeight = (file: FolderFileSummary): number => {
-  const aspectRatio = getMediaAspectRatio(file) ?? getMediaPlaceholderAspectRatio(file);
-
-  if (!aspectRatio) {
-    return 1;
-  }
-
-  return 1 / aspectRatio;
-};
-
-const createPreviewDetailRows = (
-  file: FolderFileSummary,
-  detail?: FileDetail,
-): Array<{ label: string; value: string }> => {
-  const dimensions = detail?.width && detail.height
-    ? `${detail.width}x${detail.height}`
-    : file.width && file.height
-      ? `${file.width}x${file.height}`
-      : undefined;
-  const rows = [
-    { label: '名称', value: detail?.name ?? file.name },
-    { label: '类型', value: detail?.fileType ?? file.fileType },
-    { label: '大小', value: detail?.sizeLabel ?? file.sizeLabel },
-    { label: '尺寸', value: dimensions },
-    { label: '拍摄', value: detail?.dateLabel ?? file.dateLabel },
-    { label: '设备', value: detail?.deviceName },
-    { label: '位置', value: detail?.location },
-    { label: 'MD5', value: detail?.md5 ?? file.md5 },
-  ];
-
-  return rows.filter((row): row is { label: string; value: string } => Boolean(row.value));
-};
-
-const createDirectoryPathItems = (directory: FolderDirectory): PathItem[] => {
-  const breadcrumbs = directory.breadcrumbs
-    .map((item) => ({
-      id: getBreadcrumbItemId(item),
-      name: item.name || item.path || '',
-    }))
-    .filter((item) => item.name);
-
-  if (breadcrumbs.length > 0) {
-    return breadcrumbs;
-  }
-
-  if (directory.folderId) {
-    return [{ id: directory.folderId, name: directory.path || '当前文件夹' }];
-  }
-
-  return [{ name: '根目录' }];
-};
-
-const createCurrentDirectoryPathItems = (directory: FolderDirectory): PathItem[] => {
-  const pathItems = createDirectoryPathItems(directory);
-  const isRootDirectory = directory.folderId === undefined && directory.breadcrumbs.length === 0;
-
-  if (isRootDirectory) {
-    return [{ isRoot: true, name: '根目录' }];
-  }
-
-  return [{ isRoot: true, name: '根目录' }, ...pathItems];
-};
-
-const createFolderStackRoutes = (breadcrumbs: FolderDirectory['breadcrumbs']) => {
-  const folderRoutes = breadcrumbs
-    .map(getBreadcrumbItemId)
-    .filter((folderId): folderId is number => folderId !== undefined && folderId > 0)
-    .map((folderId) => ({ name: 'directory' as const, params: { folderId } }));
-
-  return [{ name: 'directory' as const, params: { folderId: undefined } }, ...folderRoutes];
-};
-
-const getBreadcrumbItemId = (item: FolderDirectory['breadcrumbs'][number]): number | undefined => {
-  return item.id ?? item.folderId ?? item.galleryFolderId;
-};
-
-const createFolderSelectionKey = (folder: FolderSummary): DirectorySelectionKey => {
-  return `folder:${folder.id || folder.path || folder.name}`;
-};
-
-const createFileSelectionKey = (file: FolderFileSummary): DirectorySelectionKey => {
-  return `file:${file.id || file.md5 || file.name}`;
-};
-
-/**
- * Keeps the current preview item in sync when an edit returns a newer md5 before the folder refresh completes.
- */
-const mergePreviewFileIntoList = (
-  files: FolderFileSummary[],
-  previewFile?: FolderFileSummary,
-): FolderFileSummary[] => {
-  if (!previewFile) {
-    return files;
-  }
-
-  if (files.some((file) => createFileSelectionKey(file) === createFileSelectionKey(previewFile))) {
-    return files.map((file) => (
-      createFileSelectionKey(file) === createFileSelectionKey(previewFile) ? { ...file, ...previewFile } : file
-    ));
-  }
-
-  return [previewFile, ...files];
-};
-
-/**
- * Tracks fullscreen preview warm-cache entries by file content version.
- */
-const createPreviewMediaKey = (file: FolderFileSummary): string => {
-  if (file.id > 0) {
-    return `file:${file.id}:${file.md5 || file.name}`;
-  }
-
-  return `file:${file.md5 || file.name}`;
-};
-
-const getDirectorySelectionItems = (directory: FolderDirectory): SelectionItem[] => {
-  return [
-    ...directory.folders.map((folder) => ({
-      folder,
-      key: createFolderSelectionKey(folder),
-      kind: 'folder' as const,
-    })),
-    ...directory.files.flatMap((group) => group.list.map((file) => ({
-      file,
-      key: createFileSelectionKey(file),
-      kind: 'file' as const,
-    }))),
-  ];
-};
-
-const isSelectedFile = (file: FolderFileSummary | undefined): file is FolderFileSummary => {
-  return Boolean(file);
-};
-
-const isSelectedFolder = (folder: FolderSummary | undefined): folder is FolderSummary => {
-  return Boolean(folder);
-};
-
-/**
- * Normalizes backend file type values before media capability checks.
- */
-const normalizePreviewFileType = (fileType?: string): string => {
-  return fileType?.trim().toUpperCase() ?? '';
-};
-
-/**
- * Accepts extension values and MIME-like backend values when deciding mobile media layout.
- */
-const isVideoFileType = (fileType?: string): boolean => {
-  const normalizedType = fileType?.trim().toLowerCase() ?? '';
-
-  if (!normalizedType) {
-    return false;
-  }
-
-  if (VIDEO_TYPES.has(normalizePreviewFileType(fileType))) {
-    return true;
-  }
-
-  return VIDEO_TYPE_KEYWORDS.some((keyword) => normalizedType.includes(keyword));
-};
-
-/**
- * Keeps MP4/MOV-like backend values on the direct native video path.
- */
-const isDirectVideoFileType = (fileType?: string): boolean => {
-  const normalizedType = fileType?.trim().toLowerCase() ?? '';
-
-  if (!normalizedType) {
-    return false;
-  }
-
-  if (DIRECT_VIDEO_PREVIEW_TYPES.has(normalizePreviewFileType(fileType))) {
-    return true;
-  }
-
-  return ['mp4', 'mov', 'm4v', 'quicktime'].some((keyword) => normalizedType.includes(keyword));
-};
-
-/**
- * Detects video media that should stay inside the mobile preview modal.
- */
-const isVideoFile = (file: FolderFileSummary): boolean => {
-  return isVideoFileType(file.fileType);
-};
-
-/**
- * Uses direct playback only for formats the native iOS/Android player is likely to decode.
- */
-const isDirectVideoPreviewSupported = (file?: FolderFileSummary): boolean => {
-  return Boolean(file && isDirectVideoFileType(file.fileType));
-};
-
-/**
- * Starts gesture handling only after a clear fullscreen preview swipe is detected.
- */
-const shouldCapturePreviewGesture = (gestureState: PanResponderGestureState): boolean => {
-  return Boolean(getPreviewGestureAction(gestureState));
-};
-
-/**
- * Maps fullscreen preview drag distance to the same actions as the close and step buttons.
- */
-const getPreviewGestureAction = (gestureState: PanResponderGestureState): PreviewGestureAction | undefined => {
-  const absX = Math.abs(gestureState.dx);
-  const absY = Math.abs(gestureState.dy);
-
-  if (
-    gestureState.dy > PREVIEW_SWIPE_CLOSE_DISTANCE &&
-    gestureState.dy > absX * PREVIEW_SWIPE_DIRECTION_RATIO
-  ) {
-    return 'close';
-  }
-
-  if (
-    absX > PREVIEW_SWIPE_STEP_DISTANCE &&
-    absX > absY * PREVIEW_SWIPE_DIRECTION_RATIO
-  ) {
-    return gestureState.dx > 0 ? 'previous' : 'next';
-  }
-
-  return undefined;
-};
-
-/**
- * Chooses the in-modal video source, falling back to the backend transcode endpoint for uncommon formats.
- */
-const getVideoPlaybackUrl = (
-  file: FolderFileSummary,
-  directUrl?: string,
-  transcodeUrl?: string,
-): string | undefined => {
-  if (isDirectVideoPreviewSupported(file)) {
-    return directUrl ?? transcodeUrl;
-  }
-
-  return transcodeUrl ?? directUrl;
-};
-
-/**
- * Keeps the preview action text aligned with the current progressive preview/original mode.
- */
-const getPreviewActionLabel = (
-  file: FolderFileSummary | undefined,
-  mode: PreviewMode,
-  preparing: boolean,
-): string => {
-  if (preparing) {
-    return '准备中';
-  }
-
-  if (mode === 'original') {
-    return '显示高清预览图';
-  }
-
-  return file && isVideoFile(file) ? '内置播放视频' : '显示原图';
-};
-
-/**
- * Names the image source that is actually rendered in the fullscreen preview.
- */
-const getPreviewImageSourceLabel = (source: PreviewImageSource): string => {
-  if (source === 'original') {
-    return '原图';
-  }
-
-  if (source === 'hd') {
-    return '高清缩略图';
-  }
-
-  return '列表缩略图';
-};
-
-/**
- * Describes whether the active preview source is already served from local cache.
- */
-const getPreviewCacheLabel = ({
-  cacheChecked,
-  cacheEnabled,
-  cacheHit,
-  sourceName,
-}: {
-  cacheChecked: boolean;
-  cacheEnabled: boolean;
-  cacheHit: boolean;
-  sourceName: string;
-}): string => {
-  if (!cacheEnabled) {
-    return `${sourceName} / 网络`;
-  }
-
-  if (!cacheChecked) {
-    return `${sourceName} / 检查缓存中`;
-  }
-
-  return cacheHit ? `${sourceName} / 本地缓存` : `${sourceName} / 网络，加载后写入缓存`;
-};
-
-/**
- * Builds the public share URL returned by the official file-share API.
- */
-const createMobileShareUrl = (serverUrl: string, key: string, password = ''): string => {
-  const url = new URL('/s', serverUrl.replace(/\/+$/, ''));
-
-  url.searchParams.set('key', key);
-
-  if (password) {
-    url.searchParams.set('pwd', password);
-  }
-
-  return url.toString();
 };
 
 const styles = StyleSheet.create({
@@ -5738,6 +4721,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: 18,
+  },
+  dialogBottomOverlay: {
+    backgroundColor: 'rgba(15, 23, 42, 0.22)',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 18,
   },
   dialogPrimaryButton: {
     alignItems: 'center',
@@ -6837,25 +5825,18 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
   },
-  previewVideoShell: {
-    flex: 1,
+  previewVideoPoster: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#020617',
+  },
+  previewVideoPosterImage: {
+    height: '100%',
     width: '100%',
   },
-  previewInfoError: {
-    color: '#dc2626',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  previewInfoHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  previewInfoLabel: {
-    color: MOBILE_SAGE_SLATE.subtle,
-    flex: 0.34,
-    fontSize: 11,
-    fontWeight: '800',
+  previewVideoShell: {
+    flex: 1,
+    position: 'relative',
+    width: '100%',
   },
   previewInfoFloatingLayer: {
     bottom: 90,
@@ -6864,38 +5845,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     zIndex: 5,
-  },
-  previewInfoPanel: {
-    alignSelf: 'stretch',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    borderColor: 'rgba(226, 232, 240, 0.88)',
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 8,
-    padding: 12,
-    ...MOBILE_SAGE_SHADOWS.floating,
-  },
-  previewInfoRow: {
-    borderBottomColor: 'rgba(226, 232, 240, 0.72)',
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: 8,
-    paddingBottom: 6,
-  },
-  previewInfoRows: {
-    gap: 4,
-  },
-  previewInfoTitle: {
-    color: MOBILE_SAGE_SLATE.title,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  previewInfoValue: {
-    color: MOBILE_SAGE_SLATE.strong,
-    flex: 1,
-    fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'right',
   },
   previewMeta: {
     color: '#94a3b8',
@@ -6918,34 +5867,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '900',
-  },
-  previewMoreButton: {
-    alignItems: 'center',
-    borderRadius: 10,
-    flexDirection: 'row',
-    gap: 9,
-    minHeight: 38,
-    paddingHorizontal: 10,
-  },
-  previewMoreButtonText: {
-    color: MOBILE_SAGE_SLATE.body,
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  previewMorePanel: {
-    backgroundColor: '#fff',
-    borderColor: 'rgba(226, 232, 240, 0.9)',
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 2,
-    padding: 8,
-    position: 'absolute',
-    right: 10,
-    top: 124,
-    width: 190,
-    zIndex: 7,
-    ...MOBILE_SAGE_SHADOWS.floating,
   },
   previewOpenButton: {
     alignItems: 'center',
@@ -6987,110 +5908,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
-  previewSettingCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  previewSettingIcon: {
-    alignItems: 'center',
-    backgroundColor: MOBILE_SAGE_NEUTRALS.control,
-    borderRadius: 999,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
-  previewSettingIconActive: {
-    backgroundColor: '#16b741',
-  },
-  previewSettingMeta: {
-    color: MOBILE_SAGE_SLATE.subtle,
-    fontSize: 11,
-    fontWeight: '700',
-    lineHeight: 15,
-    marginTop: 2,
-  },
-  previewSettingRow: {
-    alignItems: 'center',
-    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
-    borderColor: MOBILE_SAGE_NEUTRALS.borderSoft,
-    borderRadius: 14,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 10,
-    padding: 10,
-  },
-  previewSettingRowActive: {
-    backgroundColor: '#f8fafc',
-    borderColor: 'rgba(203, 213, 225, 0.92)',
-  },
-  previewSettingRowDisabled: {
-    opacity: 0.5,
-  },
-  previewSettingSwitch: {
-    backgroundColor: 'rgba(148, 163, 184, 0.32)',
-    borderRadius: 999,
-    height: 18,
-    padding: 2,
-    width: 34,
-  },
-  previewSettingSwitchActive: {
-    backgroundColor: '#16b741',
-  },
-  previewSettingSwitchThumb: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#cbd5e1',
-    borderRadius: 999,
-    height: 14,
-    width: 14,
-  },
-  previewSettingSwitchThumbActive: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#fff',
-  },
-  previewSettingTitle: {
-    color: MOBILE_SAGE_SLATE.title,
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  previewSettingsClose: {
-    alignItems: 'center',
-    backgroundColor: MOBILE_SAGE_NEUTRALS.control,
-    borderRadius: 999,
-    height: 30,
-    justifyContent: 'center',
-    width: 30,
-  },
-  previewSettingsHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    justifyContent: 'space-between',
-  },
-  previewSettingsMeta: {
-    color: MOBILE_SAGE_SLATE.subtle,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  previewSettingsPanel: {
-    alignSelf: 'center',
-    backgroundColor: '#fff',
-    borderColor: MOBILE_SAGE_NEUTRALS.border,
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 10,
-    left: 10,
-    padding: 14,
-    position: 'absolute',
-    right: 10,
-    top: 124,
-    zIndex: 7,
-  },
-  previewSettingsTitle: {
-    color: MOBILE_SAGE_SLATE.title,
-    fontSize: 14,
-    fontWeight: '900',
-  },
   previewStepButton: {
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
@@ -7128,20 +5945,6 @@ const styles = StyleSheet.create({
   },
   previewToolbarScroll: {
     flex: 1,
-  },
-  previewToolButton: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.34)',
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
-  },
-  previewToolButtonActive: {
-    backgroundColor: 'rgba(22, 183, 65, 0.78)',
-    borderColor: 'rgba(255, 255, 255, 0.34)',
   },
   previewToolButtonDisabled: {
     opacity: 0.42,

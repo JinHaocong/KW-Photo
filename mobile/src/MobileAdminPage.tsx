@@ -1,9 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,9 +13,14 @@ import {
 import type { LayoutChangeEvent } from 'react-native';
 
 import type {
+  AdminDuplicateFileRecord,
+  AdminFileDeleteLogPage,
   AdminGallery,
   AdminGalleryMutationPayload,
+  AdminGalleryScanSettings,
   AdminGalleryStat,
+  AdminGalleryStatsOverview,
+  AdminGalleryStatRow,
   AdminGalleryUserLink,
   AdminInfoItem,
   AdminSkippedFolderLog,
@@ -29,13 +33,17 @@ import type {
   CurrentUser,
 } from '@kwphoto/core';
 import {
+  clearAdminFileDeleteLogs,
   createAdminGallery,
   deleteAdminGallery,
   exportAdminDeletedFiles,
   fetchAdminGalleries,
+  fetchAdminFileDeleteLogs,
   fetchAdminGalleryDetail,
   fetchAdminGalleryRootDirs,
+  fetchAdminGalleryScanSettings,
   fetchAdminGalleryStat,
+  fetchAdminGalleryStatsOverview,
   fetchAdminGallerySubDirs,
   fetchAdminGalleryUserLinks,
   fetchAdminLicenseInfo,
@@ -48,8 +56,11 @@ import {
   getApiErrorMessage,
   pauseAdminTasks,
   resumeAdminTasks,
+  scanAdminAllGalleries,
   scanAdminGallery,
   updateAdminGallery,
+  updateAdminGalleryAutoScanSkipIds,
+  updateAdminGalleryScanSettings,
   updateAdminGalleryWeight,
 } from '@kwphoto/core';
 
@@ -67,7 +78,6 @@ import {
   mergeMobilePreferences,
   readMobilePreferences,
 } from './mobile-storage';
-import type { MobileAdminTab } from './mobile-storage';
 import {
   MOBILE_SAGE_NEUTRALS,
   MOBILE_SAGE_SLATE,
@@ -77,6 +87,52 @@ import {
   MobileLoadingState,
   MobilePullRefreshScrollView,
 } from './MobileLoadingState';
+import {
+  ADMIN_NOTIFICATION_VISIBLE_MS,
+  ADMIN_PAGE_EDGE_PADDING,
+  ADMIN_TABS,
+  EMPTY_SCAN_SETTINGS,
+  RECOGNITION_TASKS,
+  SCAN_SETTING_SWITCHES,
+  TASK_STATUS_LABELS,
+  TASK_TABS,
+} from './admin/adminConfig';
+import {
+  buildCacheFolderTree,
+  collectCacheTreeFolders,
+  createEmptyCacheStats,
+  createEmptyTaskCounts,
+  getCacheCompositionPills,
+  getCacheFolderMetaPills,
+} from './admin/adminCacheTree';
+import {
+  formatAdminCount,
+  formatAdminDateTime,
+  formatAdminInfoValue,
+  formatFileSize,
+  getFolderName,
+  getParentPath,
+  getServerHost,
+  normalizeFileType,
+  toggleListValue,
+} from './admin/adminFormatters';
+import {
+  getAdminTabLabel,
+  getAdminTabMeta,
+  getCenteredAdminTabScrollX,
+} from './admin/adminTabs';
+import type {
+  AdminIconName,
+  AdminTab,
+  AdminTabLayout,
+  CacheFolderTreeNode,
+  GalleryEditorState,
+} from './admin/adminTypes';
+import { createInitialEditorState, mergeCurrentUser } from './admin/galleryEditorUtils';
+import { AdminConfirmDialog, AdminWeightDialog } from './admin/dialogs/AdminActionDialogs';
+import { useAdminGalleryTaskPolling } from './admin/hooks/useAdminGalleryTaskPolling';
+import { AdminGalleryCard } from './admin/panels/AdminGalleryCard';
+import { MobileBottomSheetModal, MobileCenterDialog } from './components/MobileDialog';
 import type { MobileSession } from './mobile-types';
 import { useMobileApiOptions } from './useMobileApiOptions';
 
@@ -84,88 +140,6 @@ interface MobileAdminPageProps {
   onChangeTokens: (tokens: AuthTokens) => void;
   session: MobileSession;
 }
-
-interface GalleryEditorState {
-  adminOnly: boolean;
-  folderInput: string;
-  folders: string[];
-  funcExclude: string[];
-  hidden: boolean;
-  name: string;
-  selectedUserIds: string[];
-  weights: string;
-}
-
-interface CacheFolderTotals {
-  coverCount: number;
-  directoryCount: number;
-  hdThumbnailCount: number;
-  itemCount: number;
-  mediaCount: number;
-  originalImageCount: number;
-  originalVideoCount: number;
-  size: number;
-  thumbnailCount: number;
-}
-
-interface CacheFolderTreeNode {
-  branchTotals: CacheFolderTotals;
-  children: CacheFolderTreeNode[];
-  depth: number;
-  folder: MobileCacheFolderSummary;
-  id: string;
-  name: string;
-  path: string;
-  totals: CacheFolderTotals;
-}
-
-type AdminIconName = ComponentProps<typeof Ionicons>['name'];
-type AdminTab = MobileAdminTab;
-
-interface CacheMetaPillData {
-  icon: AdminIconName;
-  label: string;
-  value: number;
-}
-
-interface AdminTabMetaSummary {
-  cacheStats: MobileCacheStats;
-  galleryCount: number;
-  taskCounts: AdminTaskCounts;
-  userCount: number;
-}
-
-interface AdminTabLayout {
-  width: number;
-  x: number;
-}
-
-const ADMIN_TABS: Array<{ description: string; icon: AdminIconName; key: AdminTab; label: string }> = [
-  { description: '服务、账号、缓存', icon: 'grid-outline', key: 'overview', label: '总览' },
-  { description: '图库列表与扫描', icon: 'images-outline', key: 'gallery', label: '图库管理' },
-  { description: '队列与上传任务', icon: 'pulse-outline', key: 'tasks', label: '后台任务' },
-  { description: '用户与权限', icon: 'people-outline', key: 'users', label: '用户管理' },
-  { description: '本地缓存明细', icon: 'server-outline', key: 'cache', label: '缓存管理' },
-  { description: '系统、授权、诊断', icon: 'shield-checkmark-outline', key: 'system', label: '系统状态' },
-];
-
-const TASK_TABS: AdminTaskStatus[] = ['active', 'waiting', 'failed', 'paused', 'completed'];
-const ADMIN_NOTIFICATION_VISIBLE_MS = 2200;
-const ADMIN_PAGE_EDGE_PADDING = 4;
-const TASK_STATUS_LABELS: Record<AdminTaskStatus, string> = {
-  active: '执行中',
-  completed: '已完成',
-  failed: '失败',
-  paused: '暂停',
-  waiting: '等待中',
-};
-const RECOGNITION_TASKS = [
-  { label: '人脸识别', value: 'face' },
-  { label: 'CLIP识别', value: 'CLIP' },
-  { label: '文本识别', value: 'ocr' },
-  { label: '场景识别', value: 'category' },
-  { label: '相似识别', value: 'similar' },
-];
 
 /**
  * Renders the mobile admin center with the same tab structure and main actions as Web.
@@ -199,6 +173,9 @@ export const MobileAdminPage = ({
   const [cacheEnabled, setCacheEnabled] = useState(true);
   const [cacheStats, setCacheStats] = useState<MobileCacheStats>(() => createEmptyCacheStats());
   const [deleteTarget, setDeleteTarget] = useState<AdminGallery>();
+  const [deletedLogOpen, setDeletedLogOpen] = useState(false);
+  const [deletedLogPage, setDeletedLogPage] = useState<AdminFileDeleteLogPage>();
+  const [duplicateFiles, setDuplicateFiles] = useState<AdminDuplicateFileRecord[]>();
   const [editorGallery, setEditorGallery] = useState<AdminGallery>();
   const [editorOpen, setEditorOpen] = useState(false);
   const [error, setError] = useState('');
@@ -208,7 +185,9 @@ export const MobileAdminPage = ({
   const [loadedTabs, setLoadedTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [scanSettingsOpen, setScanSettingsOpen] = useState(false);
   const [skippedLogs, setSkippedLogs] = useState<AdminSkippedFolderLog[]>([]);
+  const [statsOpen, setStatsOpen] = useState(false);
   const [submittingEditor, setSubmittingEditor] = useState(false);
   const [systemItems, setSystemItems] = useState<AdminInfoItem[]>([]);
   const [taskCounts, setTaskCounts] = useState<AdminTaskCounts>(() => createEmptyTaskCounts());
@@ -220,6 +199,12 @@ export const MobileAdminPage = ({
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [weightTarget, setWeightTarget] = useState<AdminGallery>();
   const [weightValue, setWeightValue] = useState('');
+  const { activeTasks: galleryActiveTasks, startPolling: startGalleryTaskPolling } = useAdminGalleryTaskPolling({
+    activeTab,
+    apiOptions,
+    enabled: adminPreferencesHydrated,
+    userId: session.user.id,
+  });
   const galleryIds = useMemo(
     () => galleries.map((gallery) => Number(gallery.id)).filter((id) => Number.isFinite(id) && id > 0),
     [galleries],
@@ -535,8 +520,31 @@ export const MobileAdminPage = ({
 
     await runAdminAction(`scan-${gallery.id}-${scanType ?? 'normal'}`, async () => {
       await scanAdminGallery(apiOptions, gallery.id as number | string, scanType);
+      startGalleryTaskPolling();
       await loadGalleries();
       return `${gallery.name} 已触发${scanType ? '检查模式' : ''}扫描`;
+    });
+  };
+
+  /**
+   * Opens the mobile delete-log sheet and loads one server page.
+   */
+  const handleOpenDeletedLogs = async (pageNo = 1): Promise<void> => {
+    setDeletedLogOpen(true);
+    await runAdminAction('deleted-logs', async () => {
+      setDeletedLogPage(await fetchAdminFileDeleteLogs(apiOptions, pageNo));
+      return undefined;
+    });
+  };
+
+  /**
+   * Clears delete logs and immediately refreshes the open sheet.
+   */
+  const handleClearDeletedLogs = async (): Promise<void> => {
+    await runAdminAction('clear-deleted-logs', async () => {
+      await clearAdminFileDeleteLogs(apiOptions);
+      setDeletedLogPage(await fetchAdminFileDeleteLogs(apiOptions, 1));
+      return '文件删除记录已清空';
     });
   };
 
@@ -667,40 +675,36 @@ export const MobileAdminPage = ({
             {activeTab === 'gallery' ? (
               <GalleryPanel
                 actionLoading={actionLoading}
+                activeTasks={galleryActiveTasks}
+                duplicateFiles={duplicateFiles}
                 galleries={galleries}
                 galleryStat={galleryStat}
                 onDeleteGallery={setDeleteTarget}
-                onExportDeletedFiles={() => runAdminAction('deleted', async () => {
-                  await exportAdminDeletedFiles(apiOptions);
-                  return '文件删除记录导出任务已提交';
-                })}
+                onOpenDeletedLogs={() => void handleOpenDeletedLogs()}
+                onOpenScanSettings={() => setScanSettingsOpen(true)}
                 onFetchSkippedLogs={() => runAdminAction('skipped', async () => {
                   const logs = await fetchAdminSkippedFolderLogs(apiOptions);
 
                   setSkippedLogs(logs);
                   return logs.length > 0 ? `发现 ${logs.length} 条跳过扫描记录` : '没有跳过扫描记录';
                 })}
-                onFetchStats={() => runAdminAction('stats', async () => {
-                  setGalleryStat(await fetchAdminGalleryStat(apiOptions, 'all'));
-                  return '图库统计已更新';
-                })}
                 onFindDuplicateFiles={() => runAdminAction('duplicate', async () => {
                   if (galleryIds.length === 0) {
                     return '当前没有可检查的图库';
                   }
 
-                  await findAdminDuplicateFiles(apiOptions, galleryIds);
-                  return '重复文件检查任务已提交';
+                  const files = await findAdminDuplicateFiles(apiOptions, galleryIds);
+
+                  setDuplicateFiles(files);
+                  return files.length > 0 ? `发现 ${files.length} 个重复文件` : '没有发现重复文件';
                 })}
                 onOpenEditor={openEditor}
+                onOpenStats={() => setStatsOpen(true)}
                 onScanAll={() => runAdminAction('scan-all', async () => {
-                  if (galleryIds.length === 0) {
-                    return '当前没有可扫描的图库';
-                  }
-
-                  await Promise.all(galleryIds.map((galleryId) => scanAdminGallery(apiOptions, galleryId)));
+                  await scanAdminAllGalleries(apiOptions);
+                  startGalleryTaskPolling();
                   await loadGalleries();
-                  return `已触发 ${galleryIds.length} 个图库扫描`;
+                  return '已触发所有图库扫描';
                 })}
                 onScanGallery={handleScanGallery}
                 onWeightGallery={(gallery) => {
@@ -760,10 +764,40 @@ export const MobileAdminPage = ({
         onSubmit={handleSubmitGallery}
       />
 
-      <WeightModal
+      <ScanSettingsModal
+        apiOptions={apiOptions}
+        open={scanSettingsOpen}
+        onClose={() => setScanSettingsOpen(false)}
+        onSaved={(nextMessage) => setMessage(nextMessage)}
+      />
+
+      <GalleryStatsModal
+        apiOptions={apiOptions}
+        galleries={galleries}
+        open={statsOpen}
+        onClose={() => setStatsOpen(false)}
+        onSaved={(nextMessage) => setMessage(nextMessage)}
+        onStatsLoaded={setGalleryStat}
+      />
+
+      <DeletedLogModal
         actionLoading={actionLoading}
-        gallery={weightTarget}
+        open={deletedLogOpen}
+        page={deletedLogPage}
+        onClearLogs={handleClearDeletedLogs}
+        onClose={() => setDeletedLogOpen(false)}
+        onExportDeletedFiles={() => runAdminAction('deleted', async () => {
+          await exportAdminDeletedFiles(apiOptions);
+          return '文件删除记录导出任务已提交';
+        })}
+        onLoadPage={handleOpenDeletedLogs}
+      />
+
+      <AdminWeightDialog
+        actionLoading={actionLoading}
+        galleryName={weightTarget?.name}
         value={weightValue}
+        visible={Boolean(weightTarget)}
         onChangeValue={setWeightValue}
         onClose={() => setWeightTarget(undefined)}
         onSubmit={() => runAdminAction('weight', async () => {
@@ -785,11 +819,12 @@ export const MobileAdminPage = ({
       />
 
       {deleteTarget ? (
-        <ConfirmSheet
+        <AdminConfirmDialog
           danger
           loading={actionLoading === 'delete'}
           message={`确定删除 ${deleteTarget.name} 吗？不会直接删除磁盘文件，但会移除图库配置。`}
           title="删除图库"
+          visible={Boolean(deleteTarget)}
           onCancel={() => setDeleteTarget(undefined)}
           onConfirm={() => runAdminAction('delete', async () => {
             if (!deleteTarget.id) {
@@ -898,47 +933,104 @@ const OverviewPanel = ({
 
 const GalleryPanel = ({
   actionLoading,
+  activeTasks,
+  duplicateFiles,
   galleries,
   galleryStat,
   onDeleteGallery,
-  onExportDeletedFiles,
   onFetchSkippedLogs,
-  onFetchStats,
   onFindDuplicateFiles,
   onOpenEditor,
+  onOpenDeletedLogs,
+  onOpenScanSettings,
+  onOpenStats,
   onScanAll,
   onScanGallery,
   onWeightGallery,
   skippedLogs,
 }: {
   actionLoading: string;
+  activeTasks: AdminTask[];
+  duplicateFiles?: AdminDuplicateFileRecord[];
   galleries: AdminGallery[];
   galleryStat?: AdminGalleryStat;
   onDeleteGallery: (gallery: AdminGallery) => void;
-  onExportDeletedFiles: () => void;
   onFetchSkippedLogs: () => void;
-  onFetchStats: () => void;
   onFindDuplicateFiles: () => void;
   onOpenEditor: (gallery?: AdminGallery) => Promise<void>;
+  onOpenDeletedLogs: () => void;
+  onOpenScanSettings: () => void;
+  onOpenStats: () => void;
   onScanAll: () => void;
   onScanGallery: (gallery: AdminGallery, scanType?: 'check') => Promise<void>;
   onWeightGallery: (gallery: AdminGallery) => void;
   skippedLogs: AdminSkippedFolderLog[];
 }) => {
+  const hiddenCount = galleries.filter((gallery) => gallery.hidden).length;
+  const visibleCount = Math.max(0, galleries.length - hiddenCount);
+  const folderCount = galleries.reduce((total, gallery) => total + Math.max(1, gallery.folders.length), 0);
+
   return (
     <View style={styles.cardGroup}>
-      <View style={styles.toolbarGrid}>
-        <AdminActionButton icon="checkmark-circle-outline" label="检查重复文件" loading={actionLoading === 'duplicate'} onPress={onFindDuplicateFiles} />
-        <AdminActionButton danger icon="document-text-outline" label="文件删除记录" loading={actionLoading === 'deleted'} onPress={onExportDeletedFiles} />
-        <AdminActionButton icon="bar-chart-outline" label="图库信息统计" loading={actionLoading === 'stats'} onPress={onFetchStats} />
-        <AdminActionButton danger icon="alert-circle-outline" label="状态异常文件" loading={actionLoading === 'skipped'} onPress={onFetchSkippedLogs} />
-        <AdminActionButton icon="settings-outline" label="图库扫描与设置" onPress={() => void onOpenEditor()} />
-        <AdminActionButton primary icon="scan-outline" label="扫描所有图库" loading={actionLoading === 'scan-all'} onPress={onScanAll} />
-      </View>
+      <View style={styles.galleryCommandPanel}>
+        <View style={styles.galleryCommandHeader}>
+          <View style={styles.galleryCommandIcon}>
+            <Ionicons color={MOBILE_SAGE_SLATE.muted} name="images-outline" size={19} />
+          </View>
+          <View style={styles.galleryCommandCopy}>
+            <Text style={styles.galleryCommandTitle}>图库维护</Text>
+            <Text style={styles.galleryCommandMeta}>{galleries.length} 个图库 · {folderCount} 个目录</Text>
+          </View>
+        </View>
 
-      <View style={styles.tipCard}>
-        <Ionicons color={MOBILE_SAGE_SLATE.muted} name="images-outline" size={18} />
-        <Text style={styles.tipText}>通过图库可以把不同文件夹的照片、视频合并展示，并授权给用户；管理员也需要授权后才能访问图库。</Text>
+        <View style={styles.galleryMetricRow}>
+          <GalleryMetricPill label="可见" value={String(visibleCount)} />
+          <GalleryMetricPill label="隐藏" value={String(hiddenCount)} />
+          <GalleryMetricPill label="目录" value={String(folderCount)} />
+        </View>
+
+        <View style={styles.galleryPrimaryActions}>
+          <GalleryCommandButton
+            icon="scan-outline"
+            label="扫描所有图库"
+            loading={actionLoading === 'scan-all'}
+            primary
+            onPress={onScanAll}
+          />
+          <GalleryCommandButton
+            icon="settings-outline"
+            label="扫描设置"
+            onPress={onOpenScanSettings}
+          />
+        </View>
+
+        <View style={styles.gallerySecondaryActions}>
+          <GalleryCommandButton
+            icon="checkmark-circle-outline"
+            label="重复文件"
+            loading={actionLoading === 'duplicate'}
+            onPress={onFindDuplicateFiles}
+          />
+          <GalleryCommandButton
+            danger
+            icon="document-text-outline"
+            label="删除记录"
+            loading={actionLoading === 'deleted-logs'}
+            onPress={onOpenDeletedLogs}
+          />
+          <GalleryCommandButton
+            icon="bar-chart-outline"
+            label="统计"
+            onPress={onOpenStats}
+          />
+          <GalleryCommandButton
+            danger
+            icon="alert-circle-outline"
+            label="异常文件"
+            loading={actionLoading === 'skipped'}
+            onPress={onFetchSkippedLogs}
+          />
+        </View>
       </View>
 
       {galleryStat ? (
@@ -960,75 +1052,87 @@ const GalleryPanel = ({
         </View>
       ) : null}
 
-      {galleries.length === 0 ? <EmptyLine text="暂无图库数据" /> : null}
-      {galleries.map((gallery, index) => (
-        <GalleryCard
-          actionLoading={actionLoading}
-          gallery={gallery}
-          index={index}
-          key={gallery.id ?? gallery.path}
-          onDeleteGallery={onDeleteGallery}
-          onOpenEditor={onOpenEditor}
-          onScanGallery={onScanGallery}
-          onWeightGallery={onWeightGallery}
-        />
-      ))}
-
-      <Pressable onPress={() => void onOpenEditor()} style={styles.addCard}>
-        <View style={styles.addCardIcon}>
-          <Ionicons color={MOBILE_SAGE_SLATE.muted} name="add-outline" size={22} />
+      {duplicateFiles ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>重复文件检查结果</Text>
+          {duplicateFiles.length === 0 ? <EmptyLine text="没有发现重复文件" /> : null}
+          {duplicateFiles.slice(0, 6).map((file) => (
+            <Text key={`${file.id}-${file.md5}`} numberOfLines={2} style={styles.cardMeta}>
+              {file.fileName} · {formatFileSize(file.size)} · 图库 {file.galleryIds.join(',') || '-'}
+            </Text>
+          ))}
         </View>
-        <Text style={styles.addCardTitle}>添加图库</Text>
-      </Pressable>
+      ) : null}
+
+      <View style={styles.galleryListHeader}>
+        <View>
+          <Text style={styles.galleryListTitle}>图库列表</Text>
+          <Text style={styles.galleryListMeta}>{galleries.length} 个图库配置</Text>
+        </View>
+        <Pressable onPress={() => void onOpenEditor()} style={styles.galleryAddButton}>
+          <Ionicons color={MOBILE_SAGE_SLATE.muted} name="add-outline" size={16} />
+          <Text style={styles.galleryAddButtonText}>添加</Text>
+        </Pressable>
+      </View>
+
+      {galleries.length === 0 ? <EmptyLine text="暂无图库数据" /> : null}
+      <View style={styles.galleryGrid}>
+        {galleries.map((gallery) => (
+          <AdminGalleryCard
+            actionLoading={actionLoading}
+            activeTasks={activeTasks}
+            gallery={gallery}
+            key={gallery.id ?? gallery.path}
+            onDeleteGallery={onDeleteGallery}
+            onOpenEditor={onOpenEditor}
+            onScanGallery={onScanGallery}
+            onWeightGallery={onWeightGallery}
+          />
+        ))}
+      </View>
     </View>
   );
 };
 
-const GalleryCard = ({
-  actionLoading,
-  gallery,
-  index,
-  onDeleteGallery,
-  onOpenEditor,
-  onScanGallery,
-  onWeightGallery,
+const GalleryMetricPill = ({ label, value }: { label: string; value: string }) => (
+  <View style={styles.galleryMetricPill}>
+    <Text style={styles.galleryMetricValue}>{value}</Text>
+    <Text style={styles.galleryMetricLabel}>{label}</Text>
+  </View>
+);
+
+const GalleryCommandButton = ({
+  danger = false,
+  icon,
+  label,
+  loading = false,
+  onPress,
+  primary = false,
 }: {
-  actionLoading: string;
-  gallery: AdminGallery;
-  index: number;
-  onDeleteGallery: (gallery: AdminGallery) => void;
-  onOpenEditor: (gallery?: AdminGallery) => Promise<void>;
-  onScanGallery: (gallery: AdminGallery, scanType?: 'check') => Promise<void>;
-  onWeightGallery: (gallery: AdminGallery) => void;
+  danger?: boolean;
+  icon: AdminIconName;
+  label: string;
+  loading?: boolean;
+  onPress: () => void;
+  primary?: boolean;
 }) => {
-  const toneStyle = GALLERY_TONES[index % GALLERY_TONES.length];
+  const theme = useMobileTheme();
+  const color = primary ? '#fff' : danger ? '#b91c1c' : theme.hex;
 
   return (
-    <View style={styles.galleryCard}>
-      <View style={[styles.galleryCover, toneStyle]}>
-        <Ionicons color="rgba(255, 255, 255, 0.92)" name="images-outline" size={24} />
-        <Text style={styles.galleryCoverCount}>{gallery.folders.length || 1}</Text>
-      </View>
-      <View style={styles.galleryBody}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardTitleWrap}>
-            <Text numberOfLines={1} style={styles.cardTitle}>{gallery.name}</Text>
-            <Text numberOfLines={1} style={styles.cardSubtitle}>{gallery.path}</Text>
-          </View>
-          <Text style={styles.badge}>{gallery.hidden ? '隐藏' : '可见'}</Text>
-        </View>
-        <Text style={styles.cardMeta}>
-          文件 {gallery.fileCount ?? 0} · 目录 {gallery.folders.length || 1} · 排序 {gallery.weights ?? '-'}
-        </Text>
-        <View style={styles.galleryActions}>
-          <SmallAction icon="folder-open-outline" label="管理" loading={actionLoading === `detail-${gallery.id}`} onPress={() => void onOpenEditor(gallery)} />
-          <SmallAction icon="refresh-outline" label="扫描" loading={actionLoading === `scan-${gallery.id}-normal`} onPress={() => void onScanGallery(gallery)} />
-          <SmallAction icon="scan-outline" label="检查" loading={actionLoading === `scan-${gallery.id}-check`} onPress={() => void onScanGallery(gallery, 'check')} />
-          <SmallAction icon="options-outline" label="权重" onPress={() => onWeightGallery(gallery)} />
-          <SmallAction danger icon="trash-outline" label="删除" onPress={() => onDeleteGallery(gallery)} />
-        </View>
-      </View>
-    </View>
+    <Pressable
+      disabled={loading}
+      onPress={onPress}
+      style={[
+        styles.galleryCommandButton,
+        primary ? { backgroundColor: theme.hex, borderColor: theme.hex } : { backgroundColor: theme.selection, borderColor: theme.light },
+        danger ? styles.dangerSoftButton : null,
+        loading ? styles.disabledButton : null,
+      ]}
+    >
+      {loading ? <ActivityIndicator color={color} size="small" /> : <Ionicons color={color} name={icon} size={15} />}
+      <Text numberOfLines={1} style={[styles.galleryCommandButtonText, { color }]}>{label}</Text>
+    </Pressable>
   );
 };
 
@@ -1469,40 +1573,6 @@ const CacheFolderTreeRow = ({
   );
 };
 
-/**
- * Keeps folder rows readable by showing only cache categories that have stored resources.
- */
-const getCacheFolderMetaPills = (totals: CacheFolderTotals): CacheMetaPillData[] => {
-  const items: CacheMetaPillData[] = [
-    { icon: 'folder-outline', label: `${totals.directoryCount} 目录`, value: totals.directoryCount },
-    { icon: 'image-outline', label: `${totals.thumbnailCount} 列表图`, value: totals.thumbnailCount },
-    { icon: 'sparkles-outline', label: `${totals.hdThumbnailCount} 高清图`, value: totals.hdThumbnailCount },
-    { icon: 'albums-outline', label: `${totals.coverCount} 封面`, value: totals.coverCount },
-    { icon: 'expand-outline', label: `${totals.originalImageCount} 原图`, value: totals.originalImageCount },
-    { icon: 'videocam-outline', label: `${totals.originalVideoCount} 视频`, value: totals.originalVideoCount },
-  ];
-  const visibleItems = items.filter((item) => item.value > 0);
-
-  return visibleItems.length > 0 ? visibleItems : [{ icon: 'server-outline', label: '0 资源', value: 0 }];
-};
-
-/**
- * Generates composition pills for the top-level cache hero card.
- */
-const getCacheCompositionPills = (stats: MobileCacheStats): CacheMetaPillData[] => {
-  const items: CacheMetaPillData[] = [
-    { icon: 'folder-outline', label: `${stats.directoryCount} 目录`, value: stats.directoryCount },
-    { icon: 'image-outline', label: `${stats.thumbnailCount} 列表图`, value: stats.thumbnailCount },
-    { icon: 'sparkles-outline', label: `${stats.hdThumbnailCount} 高清图`, value: stats.hdThumbnailCount },
-    { icon: 'albums-outline', label: `${stats.coverCount} 封面`, value: stats.coverCount },
-    { icon: 'expand-outline', label: `${stats.originalImageCount} 原图`, value: stats.originalImageCount },
-    { icon: 'videocam-outline', label: `${stats.originalVideoCount} 视频`, value: stats.originalVideoCount },
-  ];
-  const visibleItems = items.filter((item) => item.value > 0);
-
-  return visibleItems.length > 0 ? visibleItems : [{ icon: 'server-outline', label: '0 资源', value: 0 }];
-};
-
 const GalleryEditorModal = ({
   apiOptions,
   currentUser,
@@ -1618,9 +1688,12 @@ const GalleryEditorModal = ({
   };
 
   return (
-    <Modal animationType="slide" onRequestClose={onClose} transparent visible={open}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.editorSheet}>
+    <MobileBottomSheetModal
+      backdropStyle={styles.modalOverlay}
+      contentStyle={styles.editorSheet}
+      onClose={onClose}
+      visible={open}
+    >
           <View style={styles.modalHeader}>
             <View>
               <Text style={styles.modalTitle}>{gallery ? '管理图库' : '添加图库'}</Text>
@@ -1648,7 +1721,7 @@ const GalleryEditorModal = ({
                   onChangeText={(value) => setState((current) => ({ ...current, folderInput: value }))}
                   placeholder="/photos/2604"
                   placeholderTextColor={MOBILE_SAGE_SLATE.subtle}
-                  style={styles.input}
+                  style={[styles.input, { flex: 1 }]}
                   value={state.folderInput}
                 />
                 <Pressable onPress={() => addFolder(state.folderInput)} style={[styles.editorSmallButton, { backgroundColor: theme.selection, borderColor: theme.light }]}>
@@ -1746,91 +1819,516 @@ const GalleryEditorModal = ({
               <Text style={styles.dialogPrimaryText}>{submitting ? '保存中' : '确定'}</Text>
             </Pressable>
           </View>
-        </View>
-      </View>
-    </Modal>
+    </MobileBottomSheetModal>
   );
 };
 
-const WeightModal = ({
-  actionLoading,
-  gallery,
-  onChangeValue,
+const ScanSettingsModal = ({
+  apiOptions,
   onClose,
-  onSubmit,
-  value,
+  onSaved,
+  open,
+}: {
+  apiOptions: ApiClientOptions;
+  open: boolean;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) => {
+  const theme = useMobileTheme();
+  const [error, setError] = useState('');
+  const [fileTypeInput, setFileTypeInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [prefixInput, setPrefixInput] = useState('');
+  const [settings, setSettings] = useState<AdminGalleryScanSettings>(EMPTY_SCAN_SETTINGS);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadSettings = useCallback(async (): Promise<void> => {
+    setError('');
+    setLoading(true);
+
+    try {
+      setSettings(await fetchAdminGalleryScanSettings(apiOptions));
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [apiOptions]);
+
+  useEffect(() => {
+    if (open) {
+      void loadSettings();
+    }
+  }, [loadSettings, open]);
+
+  /**
+   * Adds an exclusion token while keeping repeated taps idempotent.
+   */
+  const addListValue = (
+    field: 'excludeFileNamePrefixes' | 'excludeFileTypes',
+    value: string,
+  ): void => {
+    const nextValue = field === 'excludeFileTypes' ? normalizeFileType(value) : value.trim();
+
+    if (!nextValue) {
+      return;
+    }
+
+    setSettings((current) => ({
+      ...current,
+      [field]: current[field].includes(nextValue) ? current[field] : [...current[field], nextValue],
+    }));
+  };
+
+  /**
+   * Saves the batch scan settings through the shared core service.
+   */
+  const handleSave = async (): Promise<void> => {
+    setSubmitting(true);
+    setError('');
+
+    try {
+      await updateAdminGalleryScanSettings(apiOptions, settings);
+      onSaved('图库扫描设置已保存');
+      onClose();
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <MobileBottomSheetModal
+      backdropStyle={styles.modalOverlay}
+      contentStyle={styles.editorSheet}
+      onClose={onClose}
+      visible={open}
+    >
+          <View style={styles.modalHeader}>
+            <View>
+              <Text style={styles.modalTitle}>图库扫描与设置</Text>
+              <Text style={styles.modalSubtitle}>{loading ? '正在读取服务端配置' : '全局扫描、xmp、raw 与视频预览规则'}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.iconCloseButton}>
+              <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close-outline" size={20} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.editorContent} showsVerticalScrollIndicator={false}>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            <EditorSection meta={`${settings.excludeFileTypes.length} 个扩展名`} title="排除文件类型">
+              <ScanListEditor
+                icon="document-outline"
+                inputValue={fileTypeInput}
+                items={settings.excludeFileTypes}
+                placeholder=".IIQ"
+                onAdd={(value) => {
+                  addListValue('excludeFileTypes', value);
+                  setFileTypeInput('');
+                }}
+                onChangeInput={setFileTypeInput}
+                onRemove={(value) => setSettings((current) => ({
+                  ...current,
+                  excludeFileTypes: current.excludeFileTypes.filter((item) => item !== value),
+                }))}
+              />
+            </EditorSection>
+
+            <EditorSection meta={`${settings.excludeFileNamePrefixes.length} 个规则`} title="排除文件名规则">
+              <ScanListEditor
+                icon="pricetag-outline"
+                inputValue={prefixInput}
+                items={settings.excludeFileNamePrefixes}
+                placeholder="@ 或 ."
+                renderItem={(value) => `${value} 开头的文件名`}
+                onAdd={(value) => {
+                  addListValue('excludeFileNamePrefixes', value);
+                  setPrefixInput('');
+                }}
+                onChangeInput={setPrefixInput}
+                onRemove={(value) => setSettings((current) => ({
+                  ...current,
+                  excludeFileNamePrefixes: current.excludeFileNamePrefixes.filter((item) => item !== value),
+                }))}
+              />
+            </EditorSection>
+
+            <EditorSection meta="保存后影响后续扫描任务" title="xmp、raw 与视频预览">
+              <View style={styles.checkGrid}>
+                {SCAN_SETTING_SWITCHES.map((item) => (
+                  <CheckTile
+                    active={settings[item.key]}
+                    key={item.key}
+                    label={item.label}
+                    meta={item.description}
+                    onPress={() => setSettings((current) => ({
+                      ...current,
+                      [item.key]: !current[item.key],
+                    }))}
+                  />
+                ))}
+              </View>
+            </EditorSection>
+          </ScrollView>
+
+          <View style={styles.dialogActions}>
+            <Pressable disabled={submitting} onPress={onClose} style={styles.dialogSecondaryButton}>
+              <Text style={styles.dialogSecondaryText}>取消</Text>
+            </Pressable>
+            <Pressable
+              disabled={loading || submitting}
+              onPress={() => void handleSave()}
+              style={[styles.dialogPrimaryButton, { backgroundColor: theme.hex }]}
+            >
+              <Text style={styles.dialogPrimaryText}>{submitting ? '保存中' : '保存'}</Text>
+            </Pressable>
+          </View>
+    </MobileBottomSheetModal>
+  );
+};
+
+const GalleryStatsModal = ({
+  apiOptions,
+  galleries,
+  onClose,
+  onSaved,
+  onStatsLoaded,
+  open,
+}: {
+  apiOptions: ApiClientOptions;
+  galleries: AdminGallery[];
+  open: boolean;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+  onStatsLoaded: (stat: AdminGalleryStat) => void;
+}) => {
+  const theme = useMobileTheme();
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [overview, setOverview] = useState<AdminGalleryStatsOverview>();
+  const [updatingGalleryId, setUpdatingGalleryId] = useState<number>();
+  const disabledAutoScanCount = overview?.rows.filter((row) => !row.autoScan).length ?? 0;
+
+  const loadStats = useCallback(async (): Promise<void> => {
+    setError('');
+    setLoading(true);
+
+    try {
+      const nextOverview = await fetchAdminGalleryStatsOverview(apiOptions, galleries);
+
+      setOverview(nextOverview);
+      onStatsLoaded(nextOverview.all);
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [apiOptions, galleries, onStatsLoaded]);
+
+  useEffect(() => {
+    if (open) {
+      void loadStats();
+    }
+  }, [loadStats, open]);
+
+  /**
+   * Persists one gallery's automatic-scan flag through the shared system config.
+   */
+  const handleToggleAutoScan = async (row: AdminGalleryStatRow): Promise<void> => {
+    if (!overview) {
+      return;
+    }
+
+    const galleryId = Number(row.galleryId);
+
+    if (!Number.isFinite(galleryId)) {
+      onSaved('当前图库没有可用 ID，无法设置自动扫描');
+      return;
+    }
+
+    const previousOverview = overview;
+    const nextAutoScan = !row.autoScan;
+    const nextSkipIds = nextAutoScan
+      ? overview.autoScanSkipIds.filter((id) => id !== galleryId)
+      : Array.from(new Set([...overview.autoScanSkipIds, galleryId]));
+
+    setUpdatingGalleryId(galleryId);
+    setOverview({
+      ...overview,
+      autoScanSkipIds: nextSkipIds,
+      rows: overview.rows.map((item) => (
+        Number(item.galleryId) === galleryId ? { ...item, autoScan: nextAutoScan } : item
+      )),
+    });
+
+    try {
+      await updateAdminGalleryAutoScanSkipIds(apiOptions, nextSkipIds);
+      onSaved(`${row.name} 已${nextAutoScan ? '开启' : '关闭'}自动扫描`);
+    } catch (requestError) {
+      setOverview(previousOverview);
+      setError(getApiErrorMessage(requestError));
+    } finally {
+      setUpdatingGalleryId(undefined);
+    }
+  };
+
+  return (
+    <MobileBottomSheetModal
+      backdropStyle={styles.modalOverlay}
+      contentStyle={[styles.editorSheet, styles.statsSheet]}
+      onClose={onClose}
+      visible={open}
+    >
+          <View style={styles.modalHeader}>
+            <View style={styles.modalTitleWrap}>
+              <Text style={styles.modalTitle}>图库信息统计&自动扫描</Text>
+              <Text style={styles.modalSubtitle}>{loading ? '正在读取每个图库的统计' : `${overview?.rows.length ?? galleries.length} 个图库 · ${disabledAutoScanCount} 个跳过自动扫描`}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.iconCloseButton}>
+              <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close-outline" size={20} />
+            </Pressable>
+          </View>
+
+          <View style={styles.statsContent}>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            <View style={styles.galleryStatsHero}>
+              <View style={styles.galleryStatsHeroHeader}>
+                <View style={[styles.galleryStatsHeroIcon, { backgroundColor: theme.selection }]}>
+                  <Ionicons color={theme.hex} name="bar-chart-outline" size={19} />
+                </View>
+                <View style={styles.galleryStatsHeroCopy}>
+                  <Text style={styles.galleryStatsHeroTitle}>全部图库</Text>
+                  <Text style={styles.galleryStatsHeroMeta}>同一文件夹只计算一次</Text>
+                </View>
+                <Pressable
+                  disabled={loading}
+                  onPress={() => void loadStats()}
+                  style={[styles.editorSmallButton, { backgroundColor: theme.selection, borderColor: theme.light }]}
+                >
+                  {loading ? <ActivityIndicator color={theme.hex} size="small" /> : <Ionicons color={theme.hex} name="refresh-outline" size={17} />}
+                </Pressable>
+              </View>
+              <View style={styles.galleryStatsMetricGrid}>
+                <GalleryStatsMetric label="照片数量" value={formatAdminCount(overview?.all.photo ?? 0)} />
+                <GalleryStatsMetric label="视频数量" value={formatAdminCount(overview?.all.video ?? 0)} />
+                <GalleryStatsMetric label="占用空间" value={formatFileSize(overview?.all.totalSize ?? 0)} />
+                <GalleryStatsMetric label="跳过扫描" value={formatAdminCount(disabledAutoScanCount)} />
+              </View>
+            </View>
+
+            <View style={styles.galleryStatsSection}>
+              <View style={styles.galleryStatsSectionHeader}>
+                <Text style={styles.cardTitle}>图库统计</Text>
+                <Text style={styles.cardMeta}>{overview?.rows.length ?? 0} 个图库</Text>
+              </View>
+              {loading ? <Text style={styles.emptyText}>正在读取图库统计...</Text> : null}
+              {!loading && overview?.rows.length === 0 ? <EmptyLine text="暂无图库统计" /> : null}
+              <ScrollView
+                contentContainerStyle={styles.galleryStatsList}
+                showsVerticalScrollIndicator={false}
+                style={styles.galleryStatsListScroll}
+              >
+                {overview?.rows.map((row) => (
+                  <View key={String(row.galleryId)} style={styles.galleryStatsCard}>
+                    <View style={styles.galleryStatsCardHeader}>
+                      <View style={styles.cardTitleWrap}>
+                        <Text numberOfLines={1} style={styles.cardTitle}>{row.name}</Text>
+                        <Text numberOfLines={1} style={styles.cardSubtitle}>
+                          {row.gallery.hidden ? '隐藏图库 · ' : ''}
+                          {row.path}
+                        </Text>
+                      </View>
+                      <Pressable
+                        disabled={updatingGalleryId === Number(row.galleryId)}
+                        onPress={() => void handleToggleAutoScan(row)}
+                        style={[
+                          styles.autoScanSwitch,
+                          row.autoScan ? { backgroundColor: theme.selection, borderColor: theme.light } : styles.autoScanSwitchOff,
+                        ]}
+                      >
+                        {updatingGalleryId === Number(row.galleryId) ? (
+                          <ActivityIndicator color={row.autoScan ? theme.hex : MOBILE_SAGE_SLATE.muted} size="small" />
+                        ) : (
+                          <Ionicons
+                            color={row.autoScan ? theme.hex : MOBILE_SAGE_SLATE.muted}
+                            name={row.autoScan ? 'checkmark-circle-outline' : 'remove-circle-outline'}
+                            size={15}
+                          />
+                        )}
+                        <Text numberOfLines={1} style={[styles.autoScanSwitchText, row.autoScan ? { color: theme.hex } : null]}>
+                          {row.autoScan ? '自动扫描' : '已跳过'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                    <View style={styles.galleryStatsInlineMetrics}>
+                      <GalleryStatsInlineMetric label="照片" value={formatAdminCount(row.photo)} />
+                      <GalleryStatsInlineMetric label="视频" value={formatAdminCount(row.video)} />
+                      <GalleryStatsInlineMetric label="空间" value={formatFileSize(row.totalSize)} />
+                    </View>
+                    {row.statError ? <Text style={styles.error}>{row.statError}</Text> : null}
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+    </MobileBottomSheetModal>
+  );
+};
+
+const GalleryStatsMetric = ({ label, value }: { label: string; value: string }) => (
+  <View style={styles.galleryStatsMetric}>
+    <Text numberOfLines={1} style={styles.galleryStatsMetricLabel}>{label}</Text>
+    <Text numberOfLines={1} style={styles.galleryStatsMetricValue}>{value}</Text>
+  </View>
+);
+
+const GalleryStatsInlineMetric = ({ label, value }: { label: string; value: string }) => (
+  <View style={styles.galleryStatsInlineMetric}>
+    <Text style={styles.galleryStatsInlineLabel}>{label}</Text>
+    <Text numberOfLines={1} style={styles.galleryStatsInlineValue}>{value}</Text>
+  </View>
+);
+
+const ScanListEditor = ({
+  icon,
+  inputValue,
+  items,
+  placeholder,
+  renderItem = (value: string) => value,
+  onAdd,
+  onChangeInput,
+  onRemove,
+}: {
+  icon: AdminIconName;
+  inputValue: string;
+  items: string[];
+  placeholder: string;
+  renderItem?: (value: string) => string;
+  onAdd: (value: string) => void;
+  onChangeInput: (value: string) => void;
+  onRemove: (value: string) => void;
+}) => {
+  const theme = useMobileTheme();
+
+  return (
+    <View style={styles.scanListEditor}>
+      <View style={styles.folderInputRow}>
+        <TextInput
+          onChangeText={onChangeInput}
+          placeholder={placeholder}
+          placeholderTextColor={MOBILE_SAGE_SLATE.subtle}
+          style={[styles.input, { flex: 1 }]}
+          value={inputValue}
+        />
+        <Pressable onPress={() => onAdd(inputValue)} style={[styles.editorSmallButton, { backgroundColor: theme.selection, borderColor: theme.light }]}>
+          <Ionicons color={theme.hex} name="add-outline" size={17} />
+        </Pressable>
+      </View>
+      <View style={styles.folderChips}>
+        {items.length === 0 ? <Text style={styles.emptyText}>未配置排除项。</Text> : null}
+        {items.map((item) => (
+          <Pressable key={item} onPress={() => onRemove(item)} style={styles.folderChip}>
+            <Ionicons color={MOBILE_SAGE_SLATE.muted} name={icon} size={14} />
+            <Text numberOfLines={1} style={styles.folderChipText}>{renderItem(item)}</Text>
+            <Ionicons color={MOBILE_SAGE_SLATE.subtle} name="close-outline" size={14} />
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+};
+
+const DeletedLogModal = ({
+  actionLoading,
+  onClearLogs,
+  onClose,
+  onExportDeletedFiles,
+  onLoadPage,
+  open,
+  page,
 }: {
   actionLoading: string;
-  gallery?: AdminGallery;
-  onChangeValue: (value: string) => void;
+  open: boolean;
+  page?: AdminFileDeleteLogPage;
+  onClearLogs: () => Promise<void>;
   onClose: () => void;
-  onSubmit: () => void;
-  value: string;
+  onExportDeletedFiles: () => Promise<void>;
+  onLoadPage: (pageNo?: number) => Promise<void>;
 }) => {
   const theme = useMobileTheme();
+  const hasPrevious = Boolean(page && page.pageNo > 1);
+  const hasNext = Boolean(page && page.pageNo * page.pageSize < page.count);
 
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible={Boolean(gallery)}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.confirmSheet}>
-          <Text style={styles.modalTitle}>修改排序权重</Text>
-          <Text style={styles.modalSubtitle}>{gallery?.name}</Text>
-          <TextInput
-            keyboardType="numeric"
-            onChangeText={onChangeValue}
-            placeholder="例如 92604"
-            placeholderTextColor={MOBILE_SAGE_SLATE.subtle}
-            style={styles.input}
-            value={value}
-          />
-          <View style={styles.dialogActions}>
-            <Pressable disabled={actionLoading === 'weight'} onPress={onClose} style={styles.dialogSecondaryButton}>
-              <Text style={styles.dialogSecondaryText}>取消</Text>
-            </Pressable>
-            <Pressable disabled={actionLoading === 'weight'} onPress={onSubmit} style={[styles.dialogPrimaryButton, { backgroundColor: theme.hex }]}>
-              <Text style={styles.dialogPrimaryText}>保存</Text>
+    <MobileBottomSheetModal
+      backdropStyle={styles.modalOverlay}
+      contentStyle={styles.editorSheet}
+      onClose={onClose}
+      visible={open}
+    >
+          <View style={styles.modalHeader}>
+            <View>
+              <Text style={styles.modalTitle}>文件删除记录</Text>
+              <Text style={styles.modalSubtitle}>{page ? `${page.count} 条记录` : '读取服务端删除日志'}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.iconCloseButton}>
+              <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close-outline" size={20} />
             </Pressable>
           </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
 
-const ConfirmSheet = ({
-  danger = false,
-  loading,
-  message,
-  onCancel,
-  onConfirm,
-  title,
-}: {
-  danger?: boolean;
-  loading: boolean;
-  message: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-  title: string;
-}) => {
-  const theme = useMobileTheme();
+          <ScrollView contentContainerStyle={styles.editorContent} showsVerticalScrollIndicator={false}>
+            {actionLoading === 'deleted-logs' ? <Text style={styles.emptyText}>正在读取文件删除记录...</Text> : null}
+            {page && page.list.length === 0 ? <EmptyLine text="无文件删除记录" /> : null}
+            {page?.list.map((log) => (
+              <View key={log.id} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.cardTitleWrap}>
+                    <Text numberOfLines={1} style={styles.cardTitle}>{log.operator}</Text>
+                    <Text numberOfLines={1} style={styles.cardMeta}>{formatAdminDateTime(log.deleteTime)} · {log.deleteType}</Text>
+                  </View>
+                  <Ionicons color={MOBILE_SAGE_SLATE.muted} name="trash-outline" size={17} />
+                </View>
+                <Text numberOfLines={2} style={styles.cardSubtitle}>{log.filePath}</Text>
+              </View>
+            ))}
+          </ScrollView>
 
-  return (
-    <Modal animationType="fade" onRequestClose={onCancel} transparent visible>
-      <View style={styles.modalOverlay}>
-        <View style={styles.confirmSheet}>
-          <Text style={styles.modalTitle}>{title}</Text>
-          <Text style={styles.modalSubtitle}>{message}</Text>
-          <View style={styles.dialogActions}>
-            <Pressable disabled={loading} onPress={onCancel} style={styles.dialogSecondaryButton}>
-              <Text style={styles.dialogSecondaryText}>取消</Text>
+          <View style={styles.deletedLogActions}>
+            <Pressable
+              disabled={actionLoading === 'deleted'}
+              onPress={() => void onExportDeletedFiles()}
+              style={styles.dialogSecondaryButton}
+            >
+              <Text style={styles.dialogSecondaryText}>导出预览图</Text>
             </Pressable>
-            <Pressable disabled={loading} onPress={onConfirm} style={[styles.dialogPrimaryButton, { backgroundColor: danger ? '#dc2626' : theme.hex }]}>
-              <Text style={styles.dialogPrimaryText}>{danger ? '删除' : '确定'}</Text>
+            <Pressable
+              disabled={actionLoading === 'clear-deleted-logs'}
+              onPress={() => void onClearLogs()}
+              style={[styles.dialogPrimaryButton, { backgroundColor: '#dc2626' }]}
+            >
+              <Text style={styles.dialogPrimaryText}>清空记录</Text>
             </Pressable>
           </View>
-        </View>
-      </View>
-    </Modal>
+          <View style={styles.dialogActions}>
+            <Pressable
+              disabled={!hasPrevious || actionLoading === 'deleted-logs'}
+              onPress={() => void onLoadPage((page?.pageNo ?? 2) - 1)}
+              style={styles.dialogSecondaryButton}
+            >
+              <Text style={styles.dialogSecondaryText}>上一页</Text>
+            </Pressable>
+            <Pressable
+              disabled={!hasNext || actionLoading === 'deleted-logs'}
+              onPress={() => void onLoadPage((page?.pageNo ?? 0) + 1)}
+              style={[styles.dialogPrimaryButton, { backgroundColor: theme.hex }]}
+            >
+              <Text style={styles.dialogPrimaryText}>下一页</Text>
+            </Pressable>
+          </View>
+    </MobileBottomSheetModal>
   );
 };
 
@@ -1941,46 +2439,6 @@ const InfoSection = ({ items, title }: { items: AdminInfoItem[]; title: string }
   </View>
 );
 
-/**
- * Converts admin diagnostics values into React Native text-safe strings.
- */
-const formatAdminInfoValue = (value: unknown): string => {
-  if (value === null || value === undefined || value === '') {
-    return '-';
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? '是' : '否';
-  }
-
-  if (typeof value === 'number') {
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.length > 0 ? value.map(formatAdminInfoValue).join(' · ') : '-';
-  }
-
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined && item !== null && item !== '');
-
-    return entries.length > 0
-      ? entries.map(([key, item]) => `${formatAdminInfoKey(key)}: ${formatAdminInfoValue(item)}`).join(' · ')
-      : '-';
-  }
-
-  return String(value);
-};
-
-const formatAdminInfoKey = (key: string): string => {
-  return key.replace(/[_-]/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
-};
-
 const EditorSection = ({ children, meta, title }: { children: ReactNode; meta: string; title: string }) => (
   <View style={styles.editorSection}>
     <View style={styles.editorSectionTitle}>
@@ -2059,346 +2517,6 @@ const EmptyLine = ({ text }: { text: string }) => {
   return <Text style={styles.emptyText}>{text}</Text>;
 };
 
-const GALLERY_TONES = [
-  { backgroundColor: '#0f766e' },
-  { backgroundColor: '#2563eb' },
-  { backgroundColor: '#7c3aed' },
-  { backgroundColor: '#be123c' },
-  { backgroundColor: '#ca8a04' },
-  { backgroundColor: '#475569' },
-];
-
-  const EMPTY_CACHE_TOTALS: CacheFolderTotals = {
-  coverCount: 0,
-  directoryCount: 0,
-  hdThumbnailCount: 0,
-  itemCount: 0,
-  mediaCount: 0,
-  originalImageCount: 0,
-  originalVideoCount: 0,
-  size: 0,
-  thumbnailCount: 0,
-};
-
-const createEmptyTaskCounts = (): AdminTaskCounts => ({
-  active: 0,
-  completed: 0,
-  failed: 0,
-  paused: 0,
-  waiting: 0,
-});
-
-const createEmptyCacheStats = (): MobileCacheStats => ({
-  approximateSize: 0,
-  coverCount: 0,
-  directoryCount: 0,
-  hdThumbnailCount: 0,
-  mediaCount: 0,
-  originalImageCount: 0,
-  originalVideoCount: 0,
-  thumbnailCount: 0,
-});
-
-/**
- * Calculates the horizontal offset that keeps the selected admin tab near the visual center.
- */
-const getCenteredAdminTabScrollX = (tabLayout: AdminTabLayout, viewportWidth: number): number => {
-  return Math.max(0, tabLayout.x - (viewportWidth - tabLayout.width) / 2);
-};
-
-/**
- * Keeps tab-level status text compact so the mobile shell does not need dense tables.
- */
-const getAdminTabMeta = (tab: AdminTab, summary: AdminTabMetaSummary): string => {
-  if (tab === 'gallery') {
-    return `${summary.galleryCount} 个图库`;
-  }
-
-  if (tab === 'tasks') {
-    return `${summary.taskCounts.active} 执行中 / ${summary.taskCounts.failed} 失败`;
-  }
-
-  if (tab === 'users') {
-    return `${summary.userCount} 个用户`;
-  }
-
-  if (tab === 'cache') {
-    return formatFileSize(summary.cacheStats.approximateSize);
-  }
-
-  if (tab === 'system') {
-    return '服务与授权';
-  }
-
-  return `${summary.galleryCount} 图库 / ${summary.taskCounts.active} 任务`;
-};
-
-const getAdminTabLabel = (tab: AdminTab): string => {
-  return ADMIN_TABS.find((item) => item.key === tab)?.label ?? '管理数据';
-};
-
-/**
- * Builds a folder-only cache tree from the mobile cache index.
- */
-const buildCacheFolderTree = (folders: MobileCacheFolderSummary[]): CacheFolderTreeNode[] => {
-  const roots: CacheFolderTreeNode[] = [];
-  const nodes = folders.map(createCacheFolderTreeNode);
-
-  nodes.forEach((node) => {
-    const parentNode = findNearestCachedParentNode(node, nodes);
-
-    if (parentNode) {
-      parentNode.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  });
-
-  hydrateCacheTreeNodes(roots, 0);
-
-  return roots;
-};
-
-const createCacheFolderTreeNode = (folder: MobileCacheFolderSummary): CacheFolderTreeNode => {
-  const totals = createTotalsFromFolder(folder);
-
-  return {
-    branchTotals: { ...totals },
-    children: [],
-    depth: 0,
-    folder,
-    id: folder.folderScopeKey,
-    name: folder.folderName,
-    path: folder.folderPath,
-    totals,
-  };
-};
-
-const findNearestCachedParentNode = (
-  node: CacheFolderTreeNode,
-  nodes: CacheFolderTreeNode[],
-): CacheFolderTreeNode | undefined => {
-  const ancestors = nodes
-    .filter((candidate) => {
-      return (
-        candidate.id !== node.id &&
-        candidate.folder.scope === node.folder.scope &&
-        isCachePathAncestor(candidate.folder.folderPath, node.folder.folderPath)
-      );
-    })
-    .sort((first, second) => {
-      return getCachePathDepth(second.folder.folderPath) - getCachePathDepth(first.folder.folderPath);
-    });
-
-  if (ancestors[0]) {
-    return ancestors[0];
-  }
-
-  const rootNode = nodes.find((candidate) => {
-    return (
-      candidate.id !== node.id &&
-      candidate.folder.scope === node.folder.scope &&
-      isRootCacheFolder(candidate.folder)
-    );
-  });
-
-  return isRootCacheFolder(node.folder) ? undefined : rootNode;
-};
-
-const hydrateCacheTreeNodes = (nodes: CacheFolderTreeNode[], depth: number): CacheFolderTotals => {
-  const totals = { ...EMPTY_CACHE_TOTALS };
-
-  nodes
-    .sort((first, second) => first.name.localeCompare(second.name, 'zh-Hans-CN'))
-    .forEach((node) => {
-      node.depth = depth;
-
-      const childTotals = hydrateCacheTreeNodes(node.children, depth + 1);
-
-      node.totals = createTotalsFromFolder(node.folder);
-      node.branchTotals = addCacheTotals(createTotalsFromFolder(node.folder), childTotals);
-      addCacheTotals(totals, node.branchTotals);
-    });
-
-  return totals;
-};
-
-const createTotalsFromFolder = (folder: MobileCacheFolderSummary): CacheFolderTotals => ({
-  coverCount: folder.coverCount,
-  directoryCount: folder.directoryCount,
-  hdThumbnailCount: folder.hdThumbnailCount,
-  itemCount: folder.itemCount,
-  mediaCount: folder.mediaCount,
-  originalImageCount: folder.originalImageCount,
-  originalVideoCount: folder.originalVideoCount,
-  size: folder.size,
-  thumbnailCount: folder.thumbnailCount,
-});
-
-const addCacheTotals = (target: CacheFolderTotals, source: CacheFolderTotals): CacheFolderTotals => {
-  target.coverCount += source.coverCount;
-  target.directoryCount += source.directoryCount;
-  target.hdThumbnailCount += source.hdThumbnailCount;
-  target.itemCount += source.itemCount;
-  target.mediaCount += source.mediaCount;
-  target.originalImageCount += source.originalImageCount;
-  target.originalVideoCount += source.originalVideoCount;
-  target.size += source.size;
-  target.thumbnailCount += source.thumbnailCount;
-
-  return target;
-};
-
-const collectCacheTreeFolders = (node: CacheFolderTreeNode): MobileCacheFolderSummary[] => {
-  return [
-    node.folder,
-    ...node.children.flatMap((child) => collectCacheTreeFolders(child)),
-  ];
-};
-
-const isCachePathAncestor = (parentPath: string, childPath: string): boolean => {
-  const normalizedParentPath = normalizeCacheTreePath(parentPath);
-  const normalizedChildPath = normalizeCacheTreePath(childPath);
-
-  if (!normalizedParentPath || normalizedParentPath === normalizedChildPath) {
-    return false;
-  }
-
-  return normalizedChildPath.startsWith(`${normalizedParentPath}/`);
-};
-
-const isRootCacheFolder = (folder: MobileCacheFolderSummary): boolean => {
-  return folder.folderKey === 'root' || normalizeCacheTreePath(folder.folderPath) === '根目录';
-};
-
-const normalizeCacheTreePath = (path: string): string => {
-  return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '').trim();
-};
-
-const getCachePathDepth = (path: string): number => {
-  return normalizeCacheTreePath(path).split('/').filter(Boolean).length;
-};
-
-const createInitialEditorState = (
-  gallery: AdminGallery | undefined,
-  users: AdminUserRecord[],
-  userLinks: AdminGalleryUserLink[],
-  currentUser?: CurrentUser,
-): GalleryEditorState => {
-  return {
-    adminOnly: gallery?.adminOnly ?? false,
-    folderInput: '',
-    folders: gallery?.folders.map((folder) => folder.path).filter(Boolean) ?? [],
-    funcExclude: gallery?.funcExclude ?? [],
-    hidden: gallery?.hidden ?? false,
-    name: gallery?.name ?? '',
-    selectedUserIds: getSelectedUserIds(gallery, users, userLinks, currentUser),
-    weights: gallery?.weights === undefined ? '' : String(gallery.weights),
-  };
-};
-
-const getSelectedUserIds = (
-  gallery: AdminGallery | undefined,
-  users: AdminUserRecord[],
-  userLinks: AdminGalleryUserLink[],
-  currentUser?: CurrentUser,
-): string[] => {
-  if (gallery?.id !== undefined) {
-    const linkedIds = userLinks
-      .filter((link) => String(link.galleryId) === String(gallery.id))
-      .map((link) => String(link.userId));
-
-    if (linkedIds.length > 0) {
-      return linkedIds;
-    }
-  }
-
-  if (currentUser?.id) {
-    return [String(currentUser.id)];
-  }
-
-  return users[0]?.id === undefined ? [] : [String(users[0].id)];
-};
-
-const mergeCurrentUser = (
-  users: AdminUserRecord[],
-  currentUser?: CurrentUser,
-): AdminUserRecord[] => {
-  if (!currentUser) {
-    return users;
-  }
-
-  const hasCurrentUser = users.some((user) => String(user.id) === String(currentUser.id));
-
-  if (hasCurrentUser) {
-    return users;
-  }
-
-  return [
-    {
-      id: currentUser.id,
-      roleLabel: currentUser.isSuperAdmin ? '超级管理员' : currentUser.isAdmin ? '管理员' : '普通用户',
-      securityLabel: currentUser.otpEnable ? '已开启 2FA' : '未开启 2FA',
-      username: currentUser.username,
-    },
-    ...users,
-  ];
-};
-
-const toggleListValue = (values: string[], value: string): string[] => {
-  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
-};
-
-const getParentPath = (path: string): string => {
-  const parentPath = path.split(/[\\/]/).filter(Boolean).slice(0, -1).join('/');
-
-  return path.startsWith('/') && parentPath ? `/${parentPath}` : parentPath;
-};
-
-const getFolderName = (path: string): string => {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-};
-
-const getServerHost = (serverUrl: string): string => {
-  try {
-    return new URL(serverUrl).host;
-  } catch {
-    return serverUrl || '-';
-  }
-};
-
-const formatAdminDateTime = (value?: number | string): string => {
-  if (!value) {
-    return '-';
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-
-  return date.toLocaleString('zh-CN', {
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-};
-
-const formatFileSize = (size: number): string => {
-  if (!Number.isFinite(size) || size <= 0) {
-    return '0 B';
-  }
-
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
-  const value = size / 1024 ** unitIndex;
-
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
-};
-
 const styles = StyleSheet.create({
   actionButton: {
     alignItems: 'center',
@@ -2450,30 +2568,6 @@ const styles = StyleSheet.create({
     backgroundColor: MOBILE_SAGE_NEUTRALS.controlActive,
     borderColor: MOBILE_SAGE_NEUTRALS.border,
   },
-  addCard: {
-    alignItems: 'center',
-    backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
-    borderColor: MOBILE_SAGE_NEUTRALS.border,
-    borderRadius: 18,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    gap: 6,
-    minHeight: 96,
-    justifyContent: 'center',
-  },
-  addCardIcon: {
-    alignItems: 'center',
-    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
-    borderRadius: 999,
-    height: 38,
-    justifyContent: 'center',
-    width: 38,
-  },
-  addCardTitle: {
-    color: MOBILE_SAGE_SLATE.body,
-    fontSize: 13,
-    fontWeight: '900',
-  },
   badge: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.control,
     borderRadius: 999,
@@ -2483,6 +2577,27 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     paddingHorizontal: 8,
     paddingVertical: 5,
+  },
+  autoScanSwitch: {
+    alignItems: 'center',
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    flexShrink: 0,
+    gap: 4,
+    minHeight: 32,
+    minWidth: 88,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  autoScanSwitchOff: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+  },
+  autoScanSwitchText: {
+    color: MOBILE_SAGE_SLATE.muted,
+    fontSize: 11,
+    fontWeight: '900',
   },
   card: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
@@ -2862,9 +2977,10 @@ const styles = StyleSheet.create({
   confirmSheet: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
     borderRadius: 20,
-    gap: 12,
     marginHorizontal: 18,
-    padding: 16,
+    paddingTop: 16,
+    paddingHorizontal: 16,
+    overflow: 'hidden',
   },
   content: {
     alignItems: 'stretch',
@@ -2877,6 +2993,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef2f2',
     borderColor: '#fecaca',
   },
+  deletedLogActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   dialogActions: {
     flexDirection: 'row',
     gap: 10,
@@ -2885,7 +3005,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 14,
     flex: 1,
-    minHeight: 44,
+    height: 44,
     justifyContent: 'center',
   },
   dialogPrimaryText: {
@@ -2900,7 +3020,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     flex: 1,
-    minHeight: 44,
+    height: 44,
     justifyContent: 'center',
   },
   dialogSecondaryText: {
@@ -3049,34 +3169,258 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+    paddingTop: 3,
   },
-  galleryBody: {
+  galleryAddButton: {
+    alignItems: 'center',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 5,
+    minHeight: 34,
+    paddingHorizontal: 11,
+  },
+  galleryAddButtonText: {
+    color: MOBILE_SAGE_SLATE.body,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  galleryCommandButton: {
+    alignItems: 'center',
+    borderRadius: 13,
+    borderWidth: 1,
     flex: 1,
-    gap: 8,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 38,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  galleryCommandButtonText: {
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  galleryCommandCopy: {
+    flex: 1,
+    gap: 2,
     minWidth: 0,
   },
-  galleryCard: {
+  galleryCommandHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 9,
+  },
+  galleryCommandIcon: {
+    alignItems: 'center',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  galleryCommandMeta: {
+    color: MOBILE_SAGE_SLATE.muted,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  galleryCommandPanel: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
     borderColor: MOBILE_SAGE_NEUTRALS.border,
     borderRadius: 18,
     borderWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     padding: 12,
   },
-  galleryCover: {
-    alignItems: 'center',
-    borderRadius: 16,
-    height: 88,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    width: 78,
-  },
-  galleryCoverCount: {
-    color: '#fff',
-    fontSize: 12,
+  galleryCommandTitle: {
+    color: MOBILE_SAGE_SLATE.strong,
+    fontSize: 15,
     fontWeight: '900',
-    marginTop: 3,
+  },
+  galleryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 8,
+    justifyContent: 'space-between',
+  },
+  galleryListHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 2,
+  },
+  galleryListMeta: {
+    color: MOBILE_SAGE_SLATE.subtle,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  galleryListTitle: {
+    color: MOBILE_SAGE_SLATE.strong,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  galleryMetricLabel: {
+    color: MOBILE_SAGE_SLATE.subtle,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  galleryMetricPill: {
+    alignItems: 'center',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 13,
+    borderWidth: 1,
+    flex: 1,
+    gap: 2,
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  galleryMetricRow: {
+    flexDirection: 'row',
+    gap: 7,
+  },
+  galleryMetricValue: {
+    color: MOBILE_SAGE_SLATE.strong,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  galleryStatsCard: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
+    borderColor: MOBILE_SAGE_NEUTRALS.borderSoft,
+    borderRadius: 13,
+    borderWidth: 1,
+    gap: 8,
+    overflow: 'hidden',
+    padding: 9,
+  },
+  galleryStatsCardHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  galleryStatsHero: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 15,
+    borderWidth: 1,
+    gap: 9,
+    padding: 11,
+  },
+  galleryStatsHeroCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  galleryStatsHeroHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 9,
+  },
+  galleryStatsHeroIcon: {
+    alignItems: 'center',
+    borderRadius: 13,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  galleryStatsHeroMeta: {
+    color: MOBILE_SAGE_SLATE.muted,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  galleryStatsHeroTitle: {
+    color: MOBILE_SAGE_SLATE.strong,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  galleryStatsInlineMetrics: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  galleryStatsInlineLabel: {
+    color: MOBILE_SAGE_SLATE.subtle,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  galleryStatsInlineMetric: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+    borderColor: MOBILE_SAGE_NEUTRALS.borderSoft,
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    gap: 2,
+    justifyContent: 'center',
+    minHeight: 42,
+    minWidth: 0,
+    paddingHorizontal: 7,
+    paddingVertical: 6,
+  },
+  galleryStatsInlineValue: {
+    color: MOBILE_SAGE_SLATE.strong,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  galleryStatsList: {
+    gap: 8,
+    paddingBottom: 2,
+  },
+  galleryStatsListScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  galleryStatsMetric: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+    borderColor: MOBILE_SAGE_NEUTRALS.borderSoft,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
+    gap: 3,
+    justifyContent: 'center',
+    minHeight: 54,
+    minWidth: 0,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  galleryStatsMetricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  galleryStatsMetricLabel: {
+    color: MOBILE_SAGE_SLATE.subtle,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  galleryStatsMetricValue: {
+    color: MOBILE_SAGE_SLATE.strong,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  galleryStatsSection: {
+    flex: 1,
+    gap: 9,
+    minHeight: 0,
+  },
+  galleryStatsSectionHeader: {
+    alignItems: 'baseline',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 2,
+  },
+  galleryPrimaryActions: {
+    flexDirection: 'row',
+    gap: 7,
+  },
+  gallerySecondaryActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
   },
   iconCloseButton: {
     alignItems: 'center',
@@ -3129,7 +3473,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     color: MOBILE_SAGE_SLATE.strong,
-    flex: 1,
     fontSize: 13,
     fontWeight: '800',
     minHeight: 42,
@@ -3195,6 +3538,24 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
   },
+  modalTitleWrap: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  weightModalOverlay: {
+    justifyContent: 'center',
+  },
+  weightSheet: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
+    borderRadius: 22,
+    flexShrink: 0,
+    marginHorizontal: 18,
+    paddingTop: 16,
+    paddingHorizontal: 16,
+    overflow: 'hidden',
+  },
+  weightSheetHeader: {},
   notificationLayer: {
     alignItems: 'center',
     left: ADMIN_PAGE_EDGE_PADDING,
@@ -3260,6 +3621,9 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 10,
     paddingTop: 10,
+  },
+  scanListEditor: {
+    gap: 9,
   },
   skeletonCard: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
@@ -3332,6 +3696,17 @@ const styles = StyleSheet.create({
   smallActionTextDanger: {
     color: '#b91c1c',
   },
+  statsContent: {
+    flex: 1,
+    gap: 12,
+    minHeight: 0,
+  },
+  statsSheet: {
+    flex: 1,
+    gap: 11,
+    maxHeight: '88%',
+    padding: 12,
+  },
   statusTab: {
     alignItems: 'center',
     backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
@@ -3400,28 +3775,6 @@ const styles = StyleSheet.create({
     color: MOBILE_SAGE_SLATE.body,
     fontSize: 12,
     fontWeight: '900',
-  },
-  tipCard: {
-    alignItems: 'flex-start',
-    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
-    borderColor: MOBILE_SAGE_NEUTRALS.border,
-    borderRadius: 16,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 9,
-    padding: 12,
-  },
-  tipText: {
-    color: MOBILE_SAGE_SLATE.muted,
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 18,
-  },
-  toolbarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
   },
   userAvatar: {
     alignItems: 'center',

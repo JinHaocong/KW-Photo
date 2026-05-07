@@ -14,6 +14,7 @@ import type {
 import type { ApiClientOptions } from '../../services/api-client';
 import { getApiErrorMessage } from '../../services/api-client';
 import type { CurrentUser } from '../../shared/types';
+import { Modal } from '../Modal';
 
 interface AdminGalleryEditorDialogProps {
   apiOptions: ApiClientOptions;
@@ -161,19 +162,25 @@ export const AdminGalleryEditorDialog = ({
   }
 
   return (
-    <div className="overlay modal-overlay gallery-editor-backdrop" role="presentation">
-      <section aria-modal="true" className="gallery-editor-dialog" role="dialog">
-        <div className="gallery-editor-dialog__header">
-          <div>
-            <h3>{editorTitle}</h3>
-            <p>{gallery ? `${gallery.name} · 调整文件夹、用户和识别任务` : '创建一个新的图库入口并绑定可浏览文件夹。'}</p>
-          </div>
-          <button aria-label="关闭图库编辑" className="icon-btn" onClick={onClose} type="button">
-            <X size={18} />
+    <Modal
+      className="gallery-editor-dialog"
+      footer={
+        <div className="dialog-actions">
+          <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
+            取消
+          </button>
+          <button className="primary-btn" disabled={submitting} onClick={() => void handleSubmit()} type="button">
+            {submitting ? '保存中...' : '确定'}
           </button>
         </div>
+      }
+      onClose={onClose}
+      open={true}
+      title={editorTitle}
+    >
+      <p>{gallery ? `${gallery.name} · 调整文件夹、用户和识别任务` : '创建一个新的图库入口并绑定可浏览文件夹。'}</p>
 
-        <div className="gallery-editor-grid">
+      <div className="gallery-editor-grid">
           <label className="settings-field">
             <span>显示名称</span>
             <input
@@ -346,17 +353,7 @@ export const AdminGalleryEditorDialog = ({
         </section>
 
         {formError ? <div className="form-error">{formError}</div> : null}
-
-        <div className="dialog-actions">
-          <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
-            取消
-          </button>
-          <button className="primary-btn" disabled={submitting} onClick={() => void handleSubmit()} type="button">
-            {submitting ? '保存中...' : '确定'}
-          </button>
-        </div>
-      </section>
-    </div>
+    </Modal>
   );
 };
 

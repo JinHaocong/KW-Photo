@@ -14,6 +14,10 @@ interface UseCachedMobileMediaUriOptions {
   enabled: boolean;
   fileId?: number;
   folder?: MobileLocalCacheFolderRef;
+  /**
+   * Shows the network URL immediately while the local cache lookup runs in the background.
+   */
+  instantNetworkFallback?: boolean;
   kind: Exclude<MobileLocalCacheResourceKind, 'directory'>;
   md5?: string;
   sourceUrl?: string;
@@ -28,6 +32,7 @@ export const useCachedMobileMediaUri = ({
   enabled,
   fileId,
   folder,
+  instantNetworkFallback = false,
   kind,
   md5,
   sourceUrl,
@@ -63,8 +68,8 @@ export const useCachedMobileMediaUri = ({
     if (identityChanged) {
       setCacheHit(false);
       setCacheChecked(false);
-      setDisplayUri(undefined);
-      setDisplayIdentity(undefined);
+      setDisplayUri(instantNetworkFallback ? sourceUrl : undefined);
+      setDisplayIdentity(instantNetworkFallback ? mediaIdentity : undefined);
     }
 
     if (!sourceUrl) {
@@ -117,7 +122,19 @@ export const useCachedMobileMediaUri = ({
     return () => {
       cancelled = true;
     };
-  }, [cacheOnMiss, enabled, fileId, folder, kind, md5, sourceUrl, variant, mediaIdentity, persistNetworkResource]);
+  }, [
+    cacheOnMiss,
+    enabled,
+    fileId,
+    folder,
+    instantNetworkFallback,
+    kind,
+    md5,
+    sourceUrl,
+    variant,
+    mediaIdentity,
+    persistNetworkResource,
+  ]);
 
   /**
    * Persists a network-loaded image after React Native confirms the source rendered.

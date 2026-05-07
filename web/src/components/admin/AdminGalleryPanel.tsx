@@ -13,35 +13,51 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  clearAdminFileDeleteLogs,
   createAdminGallery,
   deleteAdminGallery,
   exportAdminDeletedFiles,
   fetchAdminGalleries,
+  fetchAdminFileDeleteLogs,
   fetchAdminGalleryDetail,
-  fetchAdminGalleryStat,
   fetchAdminGalleryUserLinks,
   fetchAdminSkippedFolderLogs,
+  fetchAdminTasks,
   fetchAdminUsers,
   findAdminDuplicateFiles,
+  isAdminGalleryTask,
+  scanAdminAllGalleries,
   scanAdminGallery,
   updateAdminGallery,
   updateAdminGalleryWeight,
 } from '../../services/admin-service';
 import type {
+  AdminDuplicateFileRecord,
+  AdminFileDeleteLogPage,
   AdminGallery,
   AdminGalleryMutationPayload,
   AdminGalleryStat,
   AdminGalleryUserLink,
   AdminSkippedFolderLog,
+  AdminTask,
   AdminUserRecord,
 } from '../../services/admin-service';
 import type { ApiClientOptions } from '../../services/api-client';
 import { getApiErrorMessage } from '../../services/api-client';
 import type { CurrentUser } from '../../shared/types';
+import { AdminGalleryConfirmDialog } from './AdminGalleryConfirmDialog';
+import { AdminGalleryDeletedLogDialog } from './AdminGalleryDeletedLogDialog';
 import { AdminGalleryEditorDialog } from './AdminGalleryEditorDialog';
+import { AdminGalleryScanSettingsDialog } from './AdminGalleryScanSettingsDialog';
+import { AdminGalleryStatsDialog } from './AdminGalleryStatsDialog';
+import { AdminGalleryWeightDialog } from './AdminGalleryWeightDialog';
+
+const ACTIVE_TASK_EMPTY_LIMIT = 5;
+const ACTIVE_TASK_REFETCH_INTERVAL = 2000;
 
 interface AdminGalleryPanelProps {
   apiOptions: ApiClientOptions;
@@ -53,8 +69,12 @@ interface AdminGalleryPanelProps {
  * Provides the gallery management workspace, including list, scan and mutation actions.
  */
 export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: AdminGalleryPanelProps) => {
+  const emptyTaskPollCountRef = useRef(0);
   const [actionLoading, setActionLoading] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<AdminGallery>();
+  const [deletedLogOpen, setDeletedLogOpen] = useState(false);
+  const [deletedLogPage, setDeletedLogPage] = useState<AdminFileDeleteLogPage>();
+  const [duplicateFiles, setDuplicateFiles] = useState<AdminDuplicateFileRecord[]>();
   const [editorGallery, setEditorGallery] = useState<AdminGallery>();
   const [editorOpen, setEditorOpen] = useState(false);
   const [error, setError] = useState('');
@@ -62,8 +82,11 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   const [loading, setLoading] = useState(false);
   const [menuGalleryKey, setMenuGalleryKey] = useState('');
   const [scanningId, setScanningId] = useState<number | string>();
+  const [scanSettingsOpen, setScanSettingsOpen] = useState(false);
   const [skippedLogs, setSkippedLogs] = useState<AdminSkippedFolderLog[]>([]);
   const [statSummary, setStatSummary] = useState<AdminGalleryStat>();
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [taskPolling, setTaskPolling] = useState(true);
   const [submittingEditor, setSubmittingEditor] = useState(false);
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [userLinks, setUserLinks] = useState<AdminGalleryUserLink[]>([]);
@@ -73,6 +96,19 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     () => galleries.map((gallery) => Number(gallery.id)).filter((id) => Number.isFinite(id) && id > 0),
     [galleries],
   );
+  const {
+    data: activeTasks = [],
+    dataUpdatedAt: activeTasksUpdatedAt,
+    errorUpdatedAt: activeTasksErrorAt,
+    isError: activeTasksError,
+    refetch: refetchActiveTasks,
+  } = useQuery({
+    enabled: taskPolling,
+    queryFn: () => fetchAdminTasks(apiOptions, 'active'),
+    queryKey: ['admin-gallery-active-tasks', apiOptions.baseUrl, currentUser?.id],
+    refetchInterval: taskPolling ? ACTIVE_TASK_REFETCH_INTERVAL : false,
+    retry: false,
+  });
 
   const loadGalleries = useCallback(async (): Promise<void> => {
     setError('');
@@ -105,6 +141,31 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   useEffect(() => {
     void loadGalleries();
   }, [loadGalleries]);
+
+  const startTaskPolling = useCallback((): void => {
+    emptyTaskPollCountRef.current = 0;
+    setTaskPolling(true);
+    void refetchActiveTasks();
+  }, [refetchActiveTasks]);
+
+  useEffect(() => {
+    const pollVersion = Math.max(activeTasksUpdatedAt, activeTasksErrorAt);
+
+    if (!taskPolling || pollVersion === 0) {
+      return;
+    }
+
+    if (activeTasksError || activeTasks.length === 0) {
+      emptyTaskPollCountRef.current += 1;
+
+      if (emptyTaskPollCountRef.current > ACTIVE_TASK_EMPTY_LIMIT) {
+        setTaskPolling(false);
+      }
+      return;
+    }
+
+    emptyTaskPollCountRef.current = 0;
+  }, [activeTasks.length, activeTasksError, activeTasksErrorAt, activeTasksUpdatedAt, taskPolling]);
 
   /**
    * Opens edit mode with the freshest gallery detail when the detail endpoint is available.
@@ -172,6 +233,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     try {
       await scanAdminGallery(apiOptions, gallery.id, scanType);
       onShowToast(`${gallery.name} 已触发${scanType ? '检查模式' : ''}扫描`);
+      startTaskPolling();
       await loadGalleries();
     } catch (requestError) {
       onShowToast(getApiErrorMessage(requestError));
@@ -196,14 +258,10 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   };
 
   const handleScanAll = async (): Promise<void> => {
-    if (galleryIds.length === 0) {
-      onShowToast('当前没有可扫描的图库');
-      return;
-    }
-
     await runPanelAction('scan-all', async () => {
-      await Promise.all(galleryIds.map((galleryId) => scanAdminGallery(apiOptions, galleryId)));
-      onShowToast(`已触发 ${galleryIds.length} 个图库扫描`);
+      await scanAdminAllGalleries(apiOptions);
+      startTaskPolling();
+      onShowToast('已触发所有图库扫描');
       await loadGalleries();
     });
   };
@@ -215,15 +273,20 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     }
 
     await runPanelAction('duplicate', async () => {
-      await findAdminDuplicateFiles(apiOptions, galleryIds);
-      onShowToast('重复文件检查任务已提交');
+      const files = await findAdminDuplicateFiles(apiOptions, galleryIds);
+
+      setDuplicateFiles(files);
+      onShowToast(files.length > 0 ? `发现 ${files.length} 个重复文件` : '没有发现重复文件');
     });
   };
 
-  const handleFetchStats = async (): Promise<void> => {
-    await runPanelAction('stats', async () => {
-      setStatSummary(await fetchAdminGalleryStat(apiOptions, 'all'));
-      onShowToast('图库统计已更新');
+  /**
+   * Opens the delete-log dialog with one paged server read.
+   */
+  const handleOpenDeletedLogs = async (pageNo = 1): Promise<void> => {
+    setDeletedLogOpen(true);
+    await runPanelAction('deleted-logs', async () => {
+      setDeletedLogPage(await fetchAdminFileDeleteLogs(apiOptions, pageNo));
     });
   };
 
@@ -240,6 +303,14 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     await runPanelAction('deleted', async () => {
       await exportAdminDeletedFiles(apiOptions);
       onShowToast('文件删除记录导出任务已提交');
+    });
+  };
+
+  const handleClearDeletedLogs = async (): Promise<void> => {
+    await runPanelAction('clear-deleted-logs', async () => {
+      await clearAdminFileDeleteLogs(apiOptions);
+      setDeletedLogPage(await fetchAdminFileDeleteLogs(apiOptions, 1));
+      onShowToast('文件删除记录已清空');
     });
   };
 
@@ -294,11 +365,11 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
           <CheckCircle2 size={15} />
           检查重复文件
         </button>
-        <button className="secondary-btn is-danger-soft" disabled={actionLoading === 'deleted'} onClick={() => void handleExportDeletedFiles()} type="button">
+        <button className="secondary-btn is-danger-soft" disabled={actionLoading === 'deleted-logs'} onClick={() => void handleOpenDeletedLogs()} type="button">
           <FileClock size={15} />
           文件删除记录
         </button>
-        <button className="secondary-btn" disabled={actionLoading === 'stats'} onClick={() => void handleFetchStats()} type="button">
+        <button className="secondary-btn" onClick={() => setStatsOpen(true)} type="button">
           <BarChart3 size={15} />
           图库信息统计&自动扫描
         </button>
@@ -306,7 +377,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
           <AlertTriangle size={15} />
           状态异常文件
         </button>
-        <button className="secondary-btn" onClick={() => void openEditor()} type="button">
+        <button className="secondary-btn" onClick={() => setScanSettingsOpen(true)} type="button">
           <Settings2 size={15} />
           图库扫描与设置
         </button>
@@ -342,6 +413,20 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
         </div>
       ) : null}
 
+      {duplicateFiles ? (
+        <div className="admin-gallery-log-panel admin-gallery-result-panel">
+          <strong>重复文件检查结果</strong>
+          <div>
+            {duplicateFiles.length === 0 ? <span>没有发现重复文件。</span> : null}
+            {duplicateFiles.slice(0, 6).map((file) => (
+              <span key={`${file.id}-${file.md5}`} title={`${file.filePath} · ${formatBytes(file.size)}`}>
+                {file.fileName} · {formatBytes(file.size)} · 图库 {file.galleryIds.join(',') || '-'}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {error ? <div className="admin-error">{error}</div> : null}
 
       <div className="admin-gallery-grid">
@@ -350,13 +435,20 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
 
         {galleries.map((gallery, index) => {
           const galleryKey = String(gallery.id ?? gallery.path);
+          const galleryTask = findGalleryTask(activeTasks, gallery);
           const menuOpen = menuGalleryKey === galleryKey;
 
           return (
             <article className="admin-gallery-card" key={galleryKey}>
-              <div className="admin-gallery-card__cover" data-tone={index % 6}>
+              <div className="admin-gallery-card__cover">
                 <div className="admin-gallery-card__picture" />
-                <span>{gallery.folders.length || 1}</span>
+                {galleryTask ? (
+                  <div className="admin-gallery-card__task" title={formatTaskTitle(galleryTask)}>
+                    <span aria-hidden="true" className="admin-gallery-card__task-spinner" />
+                    <span>{galleryTask.name}</span>
+                    {galleryTask.progressLabel !== '无进度' ? <em>{galleryTask.progressLabel}</em> : null}
+                  </div>
+                ) : null}
               </div>
               <div className="admin-gallery-card__body">
                 <div>
@@ -364,7 +456,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
                   <span title={gallery.path}>{gallery.path}</span>
                 </div>
                 <div className="admin-gallery-card__meta">
-                  <span>{gallery.hidden ? '隐藏' : '可见'}</span>
+                  <span>{galleryTask ? '扫描中' : gallery.hidden ? '隐藏' : '可见'}</span>
                   <span>排序:{gallery.weights ?? '-'}</span>
                 </div>
               </div>
@@ -440,48 +532,72 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
         onSubmit={handleSubmitGallery}
       />
 
-      {weightTarget ? (
-        <div className="overlay modal-overlay gallery-editor-backdrop" role="presentation">
-          <section aria-modal="true" className="gallery-confirm-dialog" role="dialog">
-            <h3>修改排序权重</h3>
-            <p>{weightTarget.name}</p>
-            <input
-              autoFocus
-              inputMode="numeric"
-              onChange={(event) => setWeightValue(event.target.value)}
-              placeholder="例如 92604"
-              value={weightValue}
-            />
-            <div className="dialog-actions">
-              <button className="secondary-btn" disabled={actionLoading === 'weight'} onClick={() => setWeightTarget(undefined)} type="button">
-                取消
-              </button>
-              <button className="primary-btn" disabled={actionLoading === 'weight'} onClick={() => void handleUpdateWeight()} type="button">
-                保存
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <AdminGalleryScanSettingsDialog
+        apiOptions={apiOptions}
+        open={scanSettingsOpen}
+        onClose={() => setScanSettingsOpen(false)}
+        onSaved={onShowToast}
+      />
 
-      {deleteTarget ? (
-        <div className="overlay modal-overlay gallery-editor-backdrop" role="presentation">
-          <section aria-modal="true" className="gallery-confirm-dialog" role="dialog">
-            <h3>删除图库</h3>
-            <p>确定删除 {deleteTarget.name} 吗？不会直接删除磁盘文件，但会移除图库配置。</p>
-            <div className="dialog-actions">
-              <button className="secondary-btn" disabled={actionLoading === 'delete'} onClick={() => setDeleteTarget(undefined)} type="button">
-                取消
-              </button>
-              <button className="danger-btn" disabled={actionLoading === 'delete'} onClick={() => void handleDeleteGallery()} type="button">
-                删除
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <AdminGalleryStatsDialog
+        apiOptions={apiOptions}
+        galleries={galleries}
+        open={statsOpen}
+        onClose={() => setStatsOpen(false)}
+        onShowToast={onShowToast}
+        onStatsLoaded={setStatSummary}
+      />
+
+      <AdminGalleryDeletedLogDialog
+        actionLoading={actionLoading}
+        onClose={() => setDeletedLogOpen(false)}
+        onClearDeletedLogs={() => void handleClearDeletedLogs()}
+        onExportDeletedFiles={() => void handleExportDeletedFiles()}
+        onLoadPage={(pageNo) => void handleOpenDeletedLogs(pageNo)}
+        open={deletedLogOpen}
+        page={deletedLogPage}
+      />
+
+      <AdminGalleryWeightDialog
+        galleryName={weightTarget?.name}
+        loading={actionLoading === 'weight'}
+        onChangeValue={setWeightValue}
+        onClose={() => setWeightTarget(undefined)}
+        onSubmit={() => void handleUpdateWeight()}
+        open={Boolean(weightTarget)}
+        value={weightValue}
+      />
+
+      <AdminGalleryConfirmDialog
+        confirmLabel="删除"
+        danger
+        loading={actionLoading === 'delete'}
+        message={`确定删除 ${deleteTarget?.name ?? ''} 吗？不会直接删除磁盘文件，但会移除图库配置。`}
+        onClose={() => setDeleteTarget(undefined)}
+        onConfirm={() => void handleDeleteGallery()}
+        open={Boolean(deleteTarget)}
+        title="删除图库"
+      />
     </div>
   );
+};
+
+const findGalleryTask = (tasks: AdminTask[], gallery: AdminGallery): AdminTask | undefined => {
+  return tasks.find((task) => {
+    if (!isAdminGalleryTask(task)) {
+      return false;
+    }
+
+    if (task.galleryId === undefined || String(task.galleryId) === 'all') {
+      return true;
+    }
+
+    return gallery.id !== undefined && String(task.galleryId) === String(gallery.id);
+  });
+};
+
+const formatTaskTitle = (task: AdminTask): string => {
+  return [task.name, task.progressLabel, task.stage?.label, task.detail].filter(Boolean).join(' · ');
 };
 
 const formatBytes = (size: number): string => {
