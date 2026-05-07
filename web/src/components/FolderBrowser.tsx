@@ -507,6 +507,8 @@ const FileCard = ({
     selectionMode ? 'is-selecting' : '',
   ].filter(Boolean).join(' ');
   const isVideo = VIDEO_TYPES.has(file.fileType);
+  const thumbnailClassName = isVideo ? 'file-thumb is-video' : 'file-thumb';
+  const thumbnailStyle = isVideo ? getVideoThumbnailStyle(file) : undefined;
   const longPressSelection = useMobileLongPressSelection({
     enabled: !selectionMode,
     onLongPress: () => {
@@ -569,7 +571,7 @@ const FileCard = ({
         type="button"
       >
         <LazyMediaSlot
-          className="file-thumb"
+          className={thumbnailClassName}
           render={(visible) => (
             <FileThumbnailMedia
               authCode={authCode}
@@ -580,6 +582,7 @@ const FileCard = ({
               visible={visible}
             />
           )}
+          style={thumbnailStyle}
         >
           {isVideo ? <span className="file-play"><Play size={16} /></span> : null}
         </LazyMediaSlot>
@@ -600,15 +603,17 @@ const LazyMediaSlot = ({
   children,
   className,
   render,
+  style,
 }: {
   children?: ReactNode;
   className: string;
   render: (visible: boolean) => ReactNode;
+  style?: CSSProperties;
 }) => {
   return (
     <InView fallbackInView rootMargin={LAZY_MEDIA_ROOT_MARGIN} triggerOnce>
       {({ inView, ref }) => (
-        <span className={className} ref={ref}>
+        <span className={className} ref={ref} style={style}>
           {render(inView)}
           {children}
         </span>
@@ -668,6 +673,19 @@ export const FileIcon = ({ file }: { file: FolderFileSummary }) => {
   return <File size={24} />;
 };
 
+/**
+ * Builds an inline aspect-ratio custom property for video thumbnails.
+ */
+const getVideoThumbnailStyle = (file: FolderFileSummary): CSSProperties | undefined => {
+  if (!file.width || !file.height || file.width <= 0 || file.height <= 0) {
+    return undefined;
+  }
+
+  return {
+    '--file-thumb-aspect-ratio': `${file.width} / ${file.height}`,
+  } as CSSProperties;
+};
+
 const CoverImageGrid = ({
   cacheEnabled,
   cacheFolder,
@@ -678,7 +696,7 @@ const CoverImageGrid = ({
   items: Array<{ md5: string; url: string }>;
 }) => {
   return (
-    <div className={items.length === 1 ? 'folder-cover-images is-single' : 'folder-cover-images'}>
+    <div className={getCoverImageGridClassName(items.length)}>
       {items.map((item) => (
         <CachedImage
           alt=""
@@ -692,6 +710,26 @@ const CoverImageGrid = ({
       ))}
     </div>
   );
+};
+
+/**
+ * Selects the collage layout for 1-4 folder cover images.
+ * @param imageCount Number of available cover images.
+ */
+const getCoverImageGridClassName = (imageCount: number): string => {
+  if (imageCount <= 1) {
+    return 'folder-cover-images is-single';
+  }
+
+  if (imageCount === 2) {
+    return 'folder-cover-images is-double';
+  }
+
+  if (imageCount === 3) {
+    return 'folder-cover-images is-triple';
+  }
+
+  return 'folder-cover-images is-quad';
 };
 
 const CachedImage = ({
