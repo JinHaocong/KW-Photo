@@ -1,14 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { FlashList } from '@shopify/flash-list';
+import type { FlashListProps, ListRenderItemInfo } from '@shopify/flash-list';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import type { RouteProp, Theme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NativeStackNavigationOptions, NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Image,
   Modal,
   PanResponder,
@@ -23,11 +24,11 @@ import {
 import type {
   ImageStyle,
   LayoutChangeEvent,
-  ListRenderItemInfo,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   PanResponderGestureState,
   StyleProp,
   ViewStyle,
-  ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -96,7 +97,7 @@ import {
   MOBILE_SAGE_SLATE,
   useMobileTheme,
 } from './mobile-theme';
-import { MobileLoadingState } from './MobileLoadingState';
+import { MobileLoadingState, MobilePullRefreshIndicator } from './MobileLoadingState';
 import ImageView from './MobileImageView';
 import { useCachedMobileMediaUri } from './useCachedMobileMediaUri';
 import { useMobileApiOptions } from './useMobileApiOptions';
@@ -185,7 +186,7 @@ type DirectoryListItem =
   | { count: number; key: string; type: 'file-heading' }
   | { key: string; type: 'file-empty' }
   | { group: FolderFileGroup; key: string; type: 'file-group-heading' }
-  | { files: FolderFileSummary[]; key: string; placeholderCount: number; type: 'media-file-row' }
+  | { file: FolderFileSummary; key: string; type: 'media-file' }
   | { files: FolderFileSummary[]; key: string; placeholderCount: number; type: 'normal-file-row' };
 
 interface PathItem {
@@ -198,9 +199,9 @@ const DEFAULT_SORT_FIELD: MobileFolderSortField = 'tokenAt';
 const DEFAULT_SORT_DIRECTION: MobileFolderSortDirection = 'DESC';
 const DEFAULT_VIEW_MODE: MobileFolderViewMode = 'list';
 const DEFAULT_CARD_SIZE: MobileFolderCardSize = 'medium';
-const DIRECTORY_LIST_INITIAL_RENDER_COUNT = 6;
-const DIRECTORY_LIST_MAX_RENDER_BATCH = 6;
-const DIRECTORY_THUMBNAIL_PRELOAD_ITEM_RADIUS = 1;
+const DIRECTORY_FLASH_LIST_DRAW_DISTANCE = 900;
+const DIRECTORY_PULL_REFRESH_REVEAL_DISTANCE = 18;
+const DIRECTORY_PULL_REFRESH_TRIGGER_DISTANCE = 72;
 const LONG_PRESS_DELAY_MS = 520;
 const MAX_FOLDER_COVER_COUNT = 4;
 const PREVIEW_NEIGHBOR_PRELOAD_RADIUS = 3;
@@ -221,6 +222,9 @@ const SORT_FIELD_LABEL: Record<MobileFolderSortField, string> = {
   tokenAt: '拍摄时间',
 };
 const SORT_FIELD_OPTIONS: MobileFolderSortField[] = ['tokenAt', 'mtime', 'fileName', 'size', 'fileType'];
+const SYNTHETIC_SORT_FILE_GROUP_LABELS = new Set(
+  SORT_FIELD_OPTIONS.map((field) => `${SORT_FIELD_LABEL[field]}排序`),
+);
 const SORT_DIRECTION_LABEL: Record<MobileFolderSortDirection, string> = {
   ASC: '升序',
   DESC: '降序',
@@ -270,6 +274,22 @@ const FOLDER_GRID_COLUMN_COUNT: Record<MobileFolderCardSize, number> = {
 const VIDEO_TYPES = new Set(['MP4', 'MOV', 'WEBM', 'M4V', 'MKV', 'AVI', 'FLV', 'MTS', 'M2TS']);
 const VIDEO_FALLBACK_ASPECT_RATIO = 16 / 9;
 const DIRECT_VIDEO_PREVIEW_TYPES = new Set(['MP4', 'MOV', 'M4V']);
+const VIDEO_TYPE_KEYWORDS = [
+  'video',
+  'mp4',
+  'mov',
+  'm4v',
+  'webm',
+  'ogg',
+  'ogv',
+  'avi',
+  'mkv',
+  'flv',
+  'mts',
+  'm2ts',
+  '3gp',
+  'quicktime',
+];
 const COVER_IMAGE_TYPES = new Set([
   'AVIF',
   'BMP',
@@ -409,6 +429,7 @@ const MobileFolderDirectoryScreen = ({
   const [folderDialogMode, setFolderDialogMode] = useState<'create' | 'rename'>();
   const [folderDialogName, setFolderDialogName] = useState('');
   const [folderDialogTarget, setFolderDialogTarget] = useState<FolderSummary>();
+  const [directoryPulling, setDirectoryPulling] = useState(false);
   const [folderSubmitting, setFolderSubmitting] = useState(false);
   const [coverDialogAutoSubmitting, setCoverDialogAutoSubmitting] = useState(false);
   const [coverDialogDirectory, setCoverDialogDirectory] = useState<FolderDirectory>(() => createEmptyDirectory());
@@ -458,11 +479,9 @@ const MobileFolderDirectoryScreen = ({
   const [previewFavoriteFileIds, setPreviewFavoriteFileIds] = useState<number[]>([]);
   const [previewWarmThumbnailUris, setPreviewWarmThumbnailUris] = useState<Record<string, string>>({});
   const [folderGridWidth, setFolderGridWidth] = useState(0);
-  const [loadedDirectoryThumbnailKeys, setLoadedDirectoryThumbnailKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const coverDialogRequestIdRef = useRef(0);
-  const directoryListItemsRef = useRef<DirectoryListItem[]>([]);
+  const directoryPullDistanceRef = useRef(0);
+  const directoryRefreshLockedRef = useRef(false);
   const handledRootRequestRef = useRef(rootRequestVersion);
   const mediaAuthRequestRef = useRef<Promise<string | undefined> | undefined>(undefined);
   const previewAutoOriginalSessionRef = useRef<string | undefined>(undefined);
@@ -520,6 +539,24 @@ const MobileFolderDirectoryScreen = ({
   );
   const folderGridModeStyle = viewMode === 'list' ? styles.folderListGrid : styles.folderGridTrack;
   const folderGridColumnCount = viewMode === 'list' ? 1 : FOLDER_GRID_COLUMN_COUNT[folderCardSize];
+  const mediaColumnCount = getMediaWaterfallColumnCount(folderCardSize);
+
+  /**
+   * Lets FlashList masonry use real media columns while keeping headers and file rows full-width.
+   */
+  const overrideDirectoryItemLayout = useCallback<NonNullable<FlashListProps<DirectoryListItem>['overrideItemLayout']>>(
+    (layout, item, _index, maxColumns) => {
+      layout.span = item.type === 'media-file' ? 1 : maxColumns;
+    },
+    [],
+  );
+
+  /**
+   * Gives FlashList stable recycle pools for heavy media cells and full-width controls.
+   */
+  const getDirectoryListItemType = useCallback((item: DirectoryListItem): string => {
+    return item.type;
+  }, []);
 
   /**
    * Stores the real folder grid viewport width so stack transitions cannot skew column anchors.
@@ -529,48 +566,6 @@ const MobileFolderDirectoryScreen = ({
 
     setFolderGridWidth((currentWidth) => (currentWidth === nextWidth ? currentWidth : nextWidth));
   }, []);
-
-  /**
-   * Marks thumbnail keys as permanently enabled once a row is close enough to the viewport.
-   */
-  const rememberDirectoryThumbnailKeys = useCallback((thumbnailKeys: string[]): void => {
-    if (thumbnailKeys.length === 0) {
-      return;
-    }
-
-    setLoadedDirectoryThumbnailKeys((current) => {
-      const next = new Set(current);
-      let changed = false;
-
-      thumbnailKeys.forEach((key) => {
-        if (!next.has(key)) {
-          next.add(key);
-          changed = true;
-        }
-      });
-
-      return changed ? next : current;
-    });
-  }, []);
-
-  const directoryListViewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 1,
-    minimumViewTime: 80,
-  }).current;
-  const handleViewableDirectoryItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: ViewToken<DirectoryListItem>[] }) => {
-      const items = directoryListItemsRef.current;
-      const thumbnailKeys = viewableItems.flatMap((viewableItem) =>
-        getNearbyDirectoryThumbnailKeys({
-          centerIndex: viewableItem.index ?? -1,
-          items,
-          radius: DIRECTORY_THUMBNAIL_PRELOAD_ITEM_RADIUS,
-        }),
-      );
-
-      rememberDirectoryThumbnailKeys(thumbnailKeys);
-    },
-  ).current;
 
   useEffect(() => {
     let mounted = true;
@@ -686,6 +681,50 @@ const MobileFolderDirectoryScreen = ({
     [apiOptions, cacheEnabled, cacheScope, currentFolderId],
   );
 
+  /**
+   * Triggers a directory reload from the native pull gesture while the visible loader stays custom.
+   */
+  const handleDirectoryRefresh = useCallback((): void => {
+    void loadDirectory(currentFolderId, 'refreshing');
+  }, [currentFolderId, loadDirectory]);
+
+  /**
+   * Tracks the overscroll distance so the themed floating loader can appear before refresh starts.
+   */
+  const handleDirectoryScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
+      const pullDistance = Math.max(0, -event.nativeEvent.contentOffset.y);
+      const nextPulling = pullDistance > DIRECTORY_PULL_REFRESH_REVEAL_DISTANCE && !refreshing;
+
+      directoryPullDistanceRef.current = pullDistance;
+      setDirectoryPulling((current) => (current === nextPulling ? current : nextPulling));
+    },
+    [refreshing],
+  );
+
+  /**
+   * Runs a custom refresh trigger so the native spinner never duplicates the themed loader.
+   */
+  const handleDirectoryScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>): void => {
+    const pullDistance = Math.max(
+      directoryPullDistanceRef.current,
+      Math.max(0, -event.nativeEvent.contentOffset.y),
+    );
+
+    setDirectoryPulling(false);
+
+    if (pullDistance >= DIRECTORY_PULL_REFRESH_TRIGGER_DISTANCE && !refreshing && !directoryRefreshLockedRef.current) {
+      directoryRefreshLockedRef.current = true;
+      handleDirectoryRefresh();
+    }
+  }, [handleDirectoryRefresh, refreshing]);
+
+  useEffect(() => {
+    if (!refreshing) {
+      directoryRefreshLockedRef.current = false;
+    }
+  }, [refreshing]);
+
   useEffect(() => {
     if (handledRootRequestRef.current === rootRequestVersion) {
       return;
@@ -784,13 +823,6 @@ const MobileFolderDirectoryScreen = ({
       }),
     [folderCardSize, folderGridColumnCount, isInitialLoading, sortedDirectory, viewMode],
   );
-
-  /**
-   * Keeps the latest virtual-list item map available to the stable viewability callback.
-   */
-  useLayoutEffect(() => {
-    directoryListItemsRef.current = directoryListItems;
-  }, [directoryListItems]);
 
   const allVisibleSelected = selectionItems.length > 0 && selectedItems.length === selectionItems.length;
   const previewIsVideo = Boolean(previewFile && isVideoFile(previewFile));
@@ -2264,7 +2296,7 @@ const MobileFolderDirectoryScreen = ({
     setCoverDialogTarget(undefined);
   };
 
-  const renderDirectoryListItem = ({ item }: ListRenderItemInfo<DirectoryListItem>) => {
+  const renderDirectoryListItemContent = (item: DirectoryListItem): ReactElement | null => {
     switch (item.type) {
       case 'initial-loading':
         return (
@@ -2280,7 +2312,7 @@ const MobileFolderDirectoryScreen = ({
         }
 
         return (
-          <View style={styles.section}>
+          <View style={[styles.section, styles.folderHeadingSection]}>
             <SectionHeading
               count={sortedDirectory.folders.length}
               title="文件夹"
@@ -2326,7 +2358,7 @@ const MobileFolderDirectoryScreen = ({
                       selected={selectedKeys.has(createFolderSelectionKey(folder))}
                       selectionMode={selectionMode}
                       showCover={showFolderCovers}
-                      thumbnailsEnabled={loadedDirectoryThumbnailKeys.has(createFolderThumbnailKey(folder))}
+                      thumbnailsEnabled
                       viewMode={viewMode}
                     />
                   ))}
@@ -2359,36 +2391,25 @@ const MobileFolderDirectoryScreen = ({
             </Text>
           </View>
         );
-      case 'media-file-row':
+      case 'media-file':
         return (
-          <View style={styles.mediaWaterfall}>
-            {item.files.map((file) => (
-              <View key={file.id || file.md5 || file.name} style={styles.mediaWaterfallColumn}>
-                <FileTile
-                  authCode={session.tokens.authCode}
-                  baseUrl={session.serverUrl}
-                  cacheEnabled={cacheEnabled}
-                  cacheFolder={cacheFolder}
-                  cardSize={folderCardSize}
-                  file={file}
-                  onLongSelect={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
-                  onPreviewFile={handlePreviewFile}
-                  onToggleSelection={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
-                  selected={selectedKeys.has(createFileSelectionKey(file))}
-                  selectionMode={selectionMode}
-                  thumbnailsEnabled={loadedDirectoryThumbnailKeys.has(createFileThumbnailKey(file))}
-                  viewMode={viewMode}
-                  waterfall
-                />
-              </View>
-            ))}
-            {Array.from({ length: item.placeholderCount }).map((_, placeholderIndex) => (
-              <View
-                key={`${item.key}-placeholder-${placeholderIndex}`}
-                pointerEvents="none"
-                style={styles.mediaWaterfallColumn}
-              />
-            ))}
+          <View style={styles.mediaMasonryItem}>
+            <FileTile
+              authCode={session.tokens.authCode}
+              baseUrl={session.serverUrl}
+              cacheEnabled={cacheEnabled}
+              cacheFolder={cacheFolder}
+              cardSize={folderCardSize}
+              file={item.file}
+              onLongSelect={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
+              onPreviewFile={handlePreviewFile}
+              onToggleSelection={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
+              selected={selectedKeys.has(createFileSelectionKey(item.file))}
+              selectionMode={selectionMode}
+              thumbnailsEnabled
+              viewMode={viewMode}
+              waterfall
+            />
           </View>
         );
       case 'normal-file-row':
@@ -2408,7 +2429,7 @@ const MobileFolderDirectoryScreen = ({
                 onToggleSelection={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
                 selected={selectedKeys.has(createFileSelectionKey(file))}
                 selectionMode={selectionMode}
-                thumbnailsEnabled={loadedDirectoryThumbnailKeys.has(createFileThumbnailKey(file))}
+                thumbnailsEnabled
                 viewMode={viewMode}
               />
             ))}
@@ -2417,6 +2438,10 @@ const MobileFolderDirectoryScreen = ({
       default:
         return null;
     }
+  };
+
+  const renderDirectoryListItem = ({ item }: ListRenderItemInfo<DirectoryListItem>) => {
+    return renderDirectoryListItemContent(item);
   };
 
   const renderPreviewChrome = () => (
@@ -2610,22 +2635,27 @@ const MobileFolderDirectoryScreen = ({
         />
       ) : null}
 
-      <FlatList
+      <FlashList
+        alwaysBounceVertical
+        bounces
         contentContainerStyle={styles.content}
         data={directoryListItems}
-        initialNumToRender={DIRECTORY_LIST_INITIAL_RENDER_COUNT}
+        drawDistance={DIRECTORY_FLASH_LIST_DRAW_DISTANCE}
+        getItemType={getDirectoryListItemType}
         keyExtractor={(item) => item.key}
-        maxToRenderPerBatch={DIRECTORY_LIST_MAX_RENDER_BATCH}
-        onRefresh={() => {
-          void loadDirectory(currentFolderId, 'refreshing');
-        }}
-        onViewableItemsChanged={handleViewableDirectoryItemsChanged}
-        refreshing={refreshing}
+        masonry={mediaColumnCount > 1}
+        numColumns={mediaColumnCount}
+        onScroll={handleDirectoryScroll}
+        onScrollEndDrag={handleDirectoryScrollEndDrag}
+        optimizeItemArrangement={false}
+        overrideItemLayout={overrideDirectoryItemLayout}
         renderItem={renderDirectoryListItem}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
-        viewabilityConfig={directoryListViewabilityConfig}
-        windowSize={7}
       />
+      <View pointerEvents="none" style={styles.directoryRefreshOverlay}>
+        <MobilePullRefreshIndicator active={directoryPulling || refreshing} theme={theme} />
+      </View>
 
       <FolderFloatingMenu
         canCreateFolder={currentFolderId !== undefined}
@@ -4793,7 +4823,6 @@ const createDirectoryListItems = ({
 
   const folderRows = chunkFolderGridRows(directory.folders, folderColumnCount);
   const fileCount = directory.files.reduce((sum, group) => sum + group.list.length, 0);
-  const mediaColumnCount = getMediaWaterfallColumnCount(cardSize);
   const normalColumnCount = viewMode === 'list' ? 1 : FOLDER_GRID_COLUMN_COUNT[cardSize];
 
   return [
@@ -4810,19 +4839,20 @@ const createDirectoryListItems = ({
     ...(directory.files.length > 0
       ? directory.files.flatMap((group, groupIndex) => {
           const groupKey = createFileGroupListKey(group, groupIndex);
-          const mediaRows = chunkFileGridRows(group.list.filter(isMediaFile), mediaColumnCount);
+          const mediaFiles = group.list.filter(isMediaFile);
           const normalRows = chunkFileGridRows(
             group.list.filter((file) => !isMediaFile(file)),
             normalColumnCount,
           );
 
           return [
-            { group, key: `file-group-heading-${groupKey}`, type: 'file-group-heading' as const },
-            ...mediaRows.map((files, rowIndex) => ({
-              files,
-              key: `media-file-row-${groupKey}-${rowIndex}-${files.map(createFileThumbnailKey).join('-')}`,
-              placeholderCount: Math.max(0, mediaColumnCount - files.length),
-              type: 'media-file-row' as const,
+            ...(shouldRenderFileGroupHeading(group)
+              ? [{ group, key: `file-group-heading-${groupKey}`, type: 'file-group-heading' as const }]
+              : []),
+            ...mediaFiles.map((file, fileIndex) => ({
+              file,
+              key: `media-file-${groupKey}-${fileIndex}-${createFileThumbnailKey(file)}`,
+              type: 'media-file' as const,
             })),
             ...normalRows.map((files, rowIndex) => ({
               files,
@@ -4837,52 +4867,6 @@ const createDirectoryListItems = ({
 };
 
 /**
- * Collects thumbnail identities for the visible row and its nearby rows.
- */
-const getNearbyDirectoryThumbnailKeys = ({
-  centerIndex,
-  items,
-  radius,
-}: {
-  centerIndex: number;
-  items: DirectoryListItem[];
-  radius: number;
-}): string[] => {
-  if (centerIndex < 0) {
-    return [];
-  }
-
-  const startIndex = Math.max(0, centerIndex - radius);
-  const endIndex = Math.min(items.length - 1, centerIndex + radius);
-  const keys: string[] = [];
-
-  for (let index = startIndex; index <= endIndex; index += 1) {
-    keys.push(...getDirectoryItemThumbnailKeys(items[index]));
-  }
-
-  return keys;
-};
-
-/**
- * Returns the thumbnail cache keys represented by one virtual-list item.
- */
-const getDirectoryItemThumbnailKeys = (item?: DirectoryListItem): string[] => {
-  if (!item) {
-    return [];
-  }
-
-  if (item.type === 'folder-row') {
-    return item.folders.map(createFolderThumbnailKey);
-  }
-
-  if (item.type === 'media-file-row' || item.type === 'normal-file-row') {
-    return item.files.map(createFileThumbnailKey);
-  }
-
-  return [];
-};
-
-/**
  * Creates a stable virtual-list key for one backend file group.
  */
 const createFileGroupListKey = (group: FolderFileGroup, index: number): string => {
@@ -4890,10 +4874,17 @@ const createFileGroupListKey = (group: FolderFileGroup, index: number): string =
 };
 
 /**
- * Creates a stable key for enabling one folder cover thumbnail set near the viewport.
+ * Hides synthetic "X排序" groups because the file section already owns that summary row.
  */
-const createFolderThumbnailKey = (folder: FolderSummary): string => {
-  return `folder:${folder.id || folder.path}:${folder.coverHashes.join(',')}`;
+const shouldRenderFileGroupHeading = (group: FolderFileGroup): boolean => {
+  return Boolean(group.addr || !isSyntheticSortFileGroup(group));
+};
+
+/**
+ * Detects the single aggregate group produced when files are sorted by non-date fields.
+ */
+const isSyntheticSortFileGroup = (group: FolderFileGroup): boolean => {
+  return SYNTHETIC_SORT_FILE_GROUP_LABELS.has(group.day);
 };
 
 /**
@@ -4904,7 +4895,7 @@ const createFileThumbnailKey = (file: FolderFileSummary): string => {
 };
 
 /**
- * Splits file thumbnails into fixed virtual rows for FlatList rendering.
+ * Splits non-media files into full-width rows while FlashList handles media masonry cells.
  */
 const chunkFileGridRows = (files: FolderFileSummary[], columnCount: number): FolderFileSummary[][] => {
   const safeColumnCount = Math.max(1, columnCount);
@@ -5014,13 +5005,11 @@ const isCoverCandidateFile = (file: FolderFileSummary): boolean => {
  * Detects image files that can be rendered as media-only folder list items.
  */
 const isImageFile = (file: FolderFileSummary): boolean => {
-  const fileType = normalizePreviewFileType(file.fileType);
-
-  if (VIDEO_TYPES.has(fileType)) {
+  if (isVideoFile(file)) {
     return false;
   }
 
-  return COVER_IMAGE_TYPES.has(fileType) || Boolean(file.width && file.height);
+  return COVER_IMAGE_TYPES.has(normalizePreviewFileType(file.fileType)) || Boolean(file.width && file.height);
 };
 
 /**
@@ -5325,17 +5314,51 @@ const normalizePreviewFileType = (fileType?: string): string => {
 };
 
 /**
+ * Accepts extension values and MIME-like backend values when deciding mobile media layout.
+ */
+const isVideoFileType = (fileType?: string): boolean => {
+  const normalizedType = fileType?.trim().toLowerCase() ?? '';
+
+  if (!normalizedType) {
+    return false;
+  }
+
+  if (VIDEO_TYPES.has(normalizePreviewFileType(fileType))) {
+    return true;
+  }
+
+  return VIDEO_TYPE_KEYWORDS.some((keyword) => normalizedType.includes(keyword));
+};
+
+/**
+ * Keeps MP4/MOV-like backend values on the direct native video path.
+ */
+const isDirectVideoFileType = (fileType?: string): boolean => {
+  const normalizedType = fileType?.trim().toLowerCase() ?? '';
+
+  if (!normalizedType) {
+    return false;
+  }
+
+  if (DIRECT_VIDEO_PREVIEW_TYPES.has(normalizePreviewFileType(fileType))) {
+    return true;
+  }
+
+  return ['mp4', 'mov', 'm4v', 'quicktime'].some((keyword) => normalizedType.includes(keyword));
+};
+
+/**
  * Detects video media that should stay inside the mobile preview modal.
  */
 const isVideoFile = (file: FolderFileSummary): boolean => {
-  return VIDEO_TYPES.has(normalizePreviewFileType(file.fileType));
+  return isVideoFileType(file.fileType);
 };
 
 /**
  * Uses direct playback only for formats the native iOS/Android player is likely to decode.
  */
 const isDirectVideoPreviewSupported = (file?: FolderFileSummary): boolean => {
-  return Boolean(file && DIRECT_VIDEO_PREVIEW_TYPES.has(normalizePreviewFileType(file.fileType)));
+  return Boolean(file && isDirectVideoFileType(file.fileType));
 };
 
 /**
@@ -5651,6 +5674,14 @@ const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.44,
   },
+  directoryRefreshOverlay: {
+    elevation: 12,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 8,
+    zIndex: 12,
+  },
   emptyText: {
     color: MOBILE_SAGE_SLATE.subtle,
     fontSize: 13,
@@ -5823,6 +5854,10 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     gap: 0,
     padding: 0,
+  },
+  mediaMasonryItem: {
+    paddingBottom: 6,
+    paddingHorizontal: 3,
   },
   largeFileCard: {
     borderRadius: 16,
@@ -6289,7 +6324,11 @@ const styles = StyleSheet.create({
   folderGridMeasure: {
     alignItems: 'center',
     alignSelf: 'stretch',
+    marginBottom: 8,
     width: '100%',
+  },
+  folderHeadingSection: {
+    marginBottom: 4,
   },
   folderGridRow: {
     columnGap: FOLDER_GRID_GAP,
