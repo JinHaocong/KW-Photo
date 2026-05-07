@@ -4,12 +4,14 @@ import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import type { RouteProp, Theme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NativeStackNavigationOptions, NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   Share,
@@ -18,7 +20,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import type { ImageStyle, LayoutChangeEvent, StyleProp, ViewStyle } from 'react-native';
+import type {
+  ImageStyle,
+  LayoutChangeEvent,
+  ListRenderItemInfo,
+  PanResponderGestureState,
+  StyleProp,
+  ViewStyle,
+  ViewToken,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type {
@@ -86,10 +96,7 @@ import {
   MOBILE_SAGE_SLATE,
   useMobileTheme,
 } from './mobile-theme';
-import {
-  MobileLoadingState,
-  MobilePullRefreshScrollView,
-} from './MobileLoadingState';
+import { MobileLoadingState } from './MobileLoadingState';
 import ImageView from './MobileImageView';
 import { useCachedMobileMediaUri } from './useCachedMobileMediaUri';
 import { useMobileApiOptions } from './useMobileApiOptions';
@@ -128,6 +135,7 @@ interface MobileFolderDirectoryScreenProps extends MobileFoldersHomeProps {
 type DirectorySelectionKind = 'file' | 'folder';
 type DirectorySelectionKey = `${DirectorySelectionKind}:${string}`;
 type PreviewImageSource = 'hd' | 'original' | 'thumbnail';
+type PreviewGestureAction = 'close' | 'next' | 'previous';
 type PreviewMode = 'original' | 'thumbnail';
 type PreviewBusyAction = 'album' | 'delete' | 'favorite' | 'refresh' | 'share';
 
@@ -149,6 +157,13 @@ interface PreviewSettingRowProps {
   onPress?: () => void;
 }
 
+interface PreviewMorePanelProps {
+  busy: boolean;
+  onRefreshDescriptor: () => void;
+  onRefreshInfo: () => void;
+  onRefreshThumbs: () => void;
+}
+
 interface PreviewImageGalleryItem {
   file: FolderFileSummary;
   thumbnailUri?: string;
@@ -162,6 +177,17 @@ interface SelectionItem {
   kind: DirectorySelectionKind;
 }
 
+type DirectoryListItem =
+  | { key: string; type: 'initial-loading' }
+  | { key: string; type: 'folder-heading' }
+  | { key: string; type: 'folder-empty' }
+  | { folders: FolderSummary[]; key: string; placeholderCount: number; type: 'folder-row' }
+  | { count: number; key: string; type: 'file-heading' }
+  | { key: string; type: 'file-empty' }
+  | { group: FolderFileGroup; key: string; type: 'file-group-heading' }
+  | { files: FolderFileSummary[]; key: string; placeholderCount: number; type: 'media-file-row' }
+  | { files: FolderFileSummary[]; key: string; placeholderCount: number; type: 'normal-file-row' };
+
 interface PathItem {
   id?: number;
   isRoot?: boolean;
@@ -172,10 +198,16 @@ const DEFAULT_SORT_FIELD: MobileFolderSortField = 'tokenAt';
 const DEFAULT_SORT_DIRECTION: MobileFolderSortDirection = 'DESC';
 const DEFAULT_VIEW_MODE: MobileFolderViewMode = 'list';
 const DEFAULT_CARD_SIZE: MobileFolderCardSize = 'medium';
+const DIRECTORY_LIST_INITIAL_RENDER_COUNT = 6;
+const DIRECTORY_LIST_MAX_RENDER_BATCH = 6;
+const DIRECTORY_THUMBNAIL_PRELOAD_ITEM_RADIUS = 1;
 const LONG_PRESS_DELAY_MS = 520;
 const MAX_FOLDER_COVER_COUNT = 4;
 const PREVIEW_NEIGHBOR_PRELOAD_RADIUS = 3;
 const PREVIEW_NOTICE_DURATION_MS = 2200;
+const PREVIEW_SWIPE_CLOSE_DISTANCE = 90;
+const PREVIEW_SWIPE_DIRECTION_RATIO = 1.3;
+const PREVIEW_SWIPE_STEP_DISTANCE = 70;
 const STATUS_COPY: Record<FolderSummary['status'], string> = {
   empty: '空文件夹',
   ready: '可浏览',
@@ -402,6 +434,7 @@ const MobileFolderDirectoryScreen = ({
   const [previewImageViewerStartIndex, setPreviewImageViewerStartIndex] = useState(0);
   const [previewInfoVisible, setPreviewInfoVisible] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('thumbnail');
+  const [previewMoreOpen, setPreviewMoreOpen] = useState(false);
   const [previewOpenNonce, setPreviewOpenNonce] = useState(0);
   const [previewPendingImageSource, setPreviewPendingImageSource] = useState<PreviewImageSource>();
   const [previewNotice, setPreviewNotice] = useState('');
@@ -425,7 +458,11 @@ const MobileFolderDirectoryScreen = ({
   const [previewFavoriteFileIds, setPreviewFavoriteFileIds] = useState<number[]>([]);
   const [previewWarmThumbnailUris, setPreviewWarmThumbnailUris] = useState<Record<string, string>>({});
   const [folderGridWidth, setFolderGridWidth] = useState(0);
+  const [loadedDirectoryThumbnailKeys, setLoadedDirectoryThumbnailKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const coverDialogRequestIdRef = useRef(0);
+  const directoryListItemsRef = useRef<DirectoryListItem[]>([]);
   const handledRootRequestRef = useRef(rootRequestVersion);
   const mediaAuthRequestRef = useRef<Promise<string | undefined> | undefined>(undefined);
   const previewAutoOriginalSessionRef = useRef<string | undefined>(undefined);
@@ -433,6 +470,7 @@ const MobileFolderDirectoryScreen = ({
   const previewImageLoadRequestRef = useRef(0);
   const previewModeRef = useRef<PreviewMode>('thumbnail');
   const previewNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const previewVideoPrepareRequestRef = useRef(0);
   const apiOptions = useMobileApiOptions({
     onChangeTokens,
     serverUrl: session.serverUrl,
@@ -491,6 +529,48 @@ const MobileFolderDirectoryScreen = ({
 
     setFolderGridWidth((currentWidth) => (currentWidth === nextWidth ? currentWidth : nextWidth));
   }, []);
+
+  /**
+   * Marks thumbnail keys as permanently enabled once a row is close enough to the viewport.
+   */
+  const rememberDirectoryThumbnailKeys = useCallback((thumbnailKeys: string[]): void => {
+    if (thumbnailKeys.length === 0) {
+      return;
+    }
+
+    setLoadedDirectoryThumbnailKeys((current) => {
+      const next = new Set(current);
+      let changed = false;
+
+      thumbnailKeys.forEach((key) => {
+        if (!next.has(key)) {
+          next.add(key);
+          changed = true;
+        }
+      });
+
+      return changed ? next : current;
+    });
+  }, []);
+
+  const directoryListViewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 1,
+    minimumViewTime: 80,
+  }).current;
+  const handleViewableDirectoryItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken<DirectoryListItem>[] }) => {
+      const items = directoryListItemsRef.current;
+      const thumbnailKeys = viewableItems.flatMap((viewableItem) =>
+        getNearbyDirectoryThumbnailKeys({
+          centerIndex: viewableItem.index ?? -1,
+          items,
+          radius: DIRECTORY_THUMBNAIL_PRELOAD_ITEM_RADIUS,
+        }),
+      );
+
+      rememberDirectoryThumbnailKeys(thumbnailKeys);
+    },
+  ).current;
 
   useEffect(() => {
     let mounted = true;
@@ -692,9 +772,27 @@ const MobileFolderDirectoryScreen = ({
       }),
     [previewFiles, session.serverUrl, session.tokens.authCode],
   );
-  const fileCount = sortedDirectory?.files.reduce((sum, group) => sum + group.list.length, 0) ?? 0;
-  const allVisibleSelected = selectionItems.length > 0 && selectedItems.length === selectionItems.length;
   const isInitialLoading = loading && !directory;
+  const directoryListItems = useMemo(
+    () =>
+      createDirectoryListItems({
+        cardSize: folderCardSize,
+        directory: sortedDirectory,
+        folderColumnCount: folderGridColumnCount,
+        initialLoading: isInitialLoading,
+        viewMode,
+      }),
+    [folderCardSize, folderGridColumnCount, isInitialLoading, sortedDirectory, viewMode],
+  );
+
+  /**
+   * Keeps the latest virtual-list item map available to the stable viewability callback.
+   */
+  useLayoutEffect(() => {
+    directoryListItemsRef.current = directoryListItems;
+  }, [directoryListItems]);
+
+  const allVisibleSelected = selectionItems.length > 0 && selectedItems.length === selectionItems.length;
   const previewIsVideo = Boolean(previewFile && isVideoFile(previewFile));
   const previewIsImage = Boolean(previewFile && isImageFile(previewFile));
   const previewFileKey = previewFile ? createFileSelectionKey(previewFile) : undefined;
@@ -787,6 +885,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewDisplayedImageSource('thumbnail');
     setPreviewDisplayedImageUri(undefined);
     setPreviewHdLoadedUri(undefined);
+    setPreviewMoreOpen(false);
     setPreviewPendingImageSource(undefined);
   }, [previewFile?.id, previewFile?.md5]);
 
@@ -1257,6 +1356,33 @@ const MobileFolderDirectoryScreen = ({
   };
 
   /**
+   * Prepares a video stream for the active fullscreen preview without letting stale requests win.
+   */
+  const prepareVideoPreview = (file: FolderFileSummary): void => {
+    const requestId = previewVideoPrepareRequestRef.current + 1;
+
+    previewVideoPrepareRequestRef.current = requestId;
+
+    if (!isVideoFile(file) || isDirectVideoPreviewSupported(file)) {
+      setVideoPreparing(false);
+      return;
+    }
+
+    setVideoPreparing(true);
+    void triggerVideoTranscode({ ...apiOptions, fileId: file.id })
+      .catch((transcodeError) => {
+        if (previewVideoPrepareRequestRef.current === requestId) {
+          showPreviewNotice(`已尝试准备转码预览：${getApiErrorMessage(transcodeError)}`);
+        }
+      })
+      .finally(() => {
+        if (previewVideoPrepareRequestRef.current === requestId) {
+          setVideoPreparing(false);
+        }
+      });
+  };
+
+  /**
    * Opens a file preview and starts media authorization if needed.
    */
   const handlePreviewFile = (file: FolderFileSummary): void => {
@@ -1275,6 +1401,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewImageViewerStartIndex(Math.max(imageViewerStartIndex, 0));
     setPreviewInfoVisible(false);
     setPreviewMode(isPreviewVideo ? 'original' : 'thumbnail');
+    setPreviewMoreOpen(false);
     setPreviewDisplayedImageSource('thumbnail');
     setPreviewDisplayedImageUri(undefined);
     setPreviewPendingImageSource(undefined);
@@ -1283,17 +1410,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
     void ensureMediaAuthCode();
-
-    if (isPreviewVideo && !isDirectVideoPreviewSupported(file)) {
-      setVideoPreparing(true);
-      void triggerVideoTranscode({ ...apiOptions, fileId: file.id })
-        .catch((transcodeError) => {
-          showPreviewNotice(`已尝试准备转码预览：${getApiErrorMessage(transcodeError)}`);
-        })
-        .finally(() => {
-          setVideoPreparing(false);
-        });
-    }
+    prepareVideoPreview(file);
   };
 
   /**
@@ -1315,11 +1432,13 @@ const MobileFolderDirectoryScreen = ({
    * Closes the fullscreen preview and clears transient toolbar state.
    */
   const closePreview = (): void => {
+    previewVideoPrepareRequestRef.current += 1;
     setPreviewFile(undefined);
     setPreviewDisplayedImageSource('thumbnail');
     setPreviewDisplayedImageUri(undefined);
     setPreviewInfoVisible(false);
     setPreviewMode('thumbnail');
+    setPreviewMoreOpen(false);
     setPreviewPendingImageSource(undefined);
     setPreviewDetailError('');
     setPreviewNotice('');
@@ -1569,19 +1688,15 @@ const MobileFolderDirectoryScreen = ({
   };
 
   /**
-   * Opens the compact official-style more menu.
+   * Toggles the compact official-style more menu inside the preview overlay.
    */
   const handleOpenPreviewMore = (): void => {
     if (!previewFile || previewBusyAction) {
       return;
     }
 
-    Alert.alert('工具', undefined, [
-      { text: '刷新人脸识别', onPress: () => void handleRefreshPreviewDescriptor() },
-      { text: '刷新缩略图', onPress: () => void handleRefreshPreviewThumbs() },
-      { text: '刷新EXIF信息', onPress: () => void handleRefreshPreviewInfo() },
-      { text: '取消', style: 'cancel' },
-    ]);
+    setPreviewSettingsOpen(false);
+    setPreviewMoreOpen((open) => !open);
   };
 
   /**
@@ -1753,15 +1868,29 @@ const MobileFolderDirectoryScreen = ({
     }
 
     const nextIndex = Math.min(Math.max(previewIndex + step, 0), previewFiles.length - 1);
+    const nextFile = previewFiles[nextIndex];
 
-    setPreviewMode('thumbnail');
+    if (!nextFile || nextIndex === previewIndex) {
+      return;
+    }
+
+    const nextIsVideo = isVideoFile(nextFile);
+    const nextImageViewerIndex = nextIsVideo
+      ? 0
+      : previewImageGalleryItems.findIndex((item) => createFileSelectionKey(item.file) === createFileSelectionKey(nextFile));
+
+    setPreviewMode(nextIsVideo ? 'original' : 'thumbnail');
     setPreviewDisplayedImageSource('thumbnail');
     setPreviewDisplayedImageUri(undefined);
     setPreviewPendingImageSource(undefined);
     setPreviewOpenNonce((current) => current + 1);
+    setPreviewImageViewerStartIndex(Math.max(nextImageViewerIndex, 0));
     setPreviewDetailError('');
+    setPreviewSettingsOpen(false);
     setVideoPreparing(false);
-    setPreviewFile(previewFiles[nextIndex]);
+    setPreviewFile(nextFile);
+    void ensureMediaAuthCode();
+    prepareVideoPreview(nextFile);
   };
 
   /**
@@ -1783,6 +1912,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewDisplayedImageUri(undefined);
     setPreviewPendingImageSource(undefined);
     setPreviewOpenNonce((current) => current + 1);
+    // react-native-image-viewing keys its modal by imageIndex, so keep the opening index stable while swiping.
     setPreviewDetailError('');
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
@@ -1814,14 +1944,25 @@ const MobileFolderDirectoryScreen = ({
     }
 
     if (previewIsVideo && !isDirectVideoPreviewSupported(previewFile)) {
+      const requestId = previewVideoPrepareRequestRef.current + 1;
+
+      previewVideoPrepareRequestRef.current = requestId;
       setVideoPreparing(true);
 
       try {
         await triggerVideoTranscode({ ...apiOptions, fileId: previewFile.id });
       } catch (transcodeError) {
-        showPreviewNotice(`已尝试准备转码预览：${getApiErrorMessage(transcodeError)}`);
+        if (previewVideoPrepareRequestRef.current === requestId) {
+          showPreviewNotice(`已尝试准备转码预览：${getApiErrorMessage(transcodeError)}`);
+        }
       } finally {
-        setVideoPreparing(false);
+        if (previewVideoPrepareRequestRef.current === requestId) {
+          setVideoPreparing(false);
+        }
+      }
+
+      if (previewVideoPrepareRequestRef.current !== requestId) {
+        return;
       }
     }
 
@@ -1884,6 +2025,29 @@ const MobileFolderDirectoryScreen = ({
     setPreviewMode('original');
     showPreviewNotice('正在使用原视频预览');
   };
+
+  const previewPanResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gestureState) => shouldCapturePreviewGesture(gestureState),
+      onPanResponderRelease: (_event, gestureState) => {
+        const action = getPreviewGestureAction(gestureState);
+
+        if (action === 'close') {
+          closePreview();
+          return;
+        }
+
+        if (action === 'previous' && previewIndex > 0) {
+          handleStepPreview(-1);
+        }
+
+        if (action === 'next' && previewIndex >= 0 && previewIndex < previewFiles.length - 1) {
+          handleStepPreview(1);
+        }
+      },
+    }),
+    [closePreview, handleStepPreview, previewFiles.length, previewIndex],
+  );
 
   /**
    * Opens the mobile folder-name dialog for create or rename flows.
@@ -2100,98 +2264,175 @@ const MobileFolderDirectoryScreen = ({
     setCoverDialogTarget(undefined);
   };
 
-  const renderFolderSection = () => {
-    if (!sortedDirectory) {
-      return null;
-    }
+  const renderDirectoryListItem = ({ item }: ListRenderItemInfo<DirectoryListItem>) => {
+    switch (item.type) {
+      case 'initial-loading':
+        return (
+          <MobileLoadingState
+            description="同步目录、封面和本地缓存状态"
+            icon="folder-outline"
+            title="正在加载文件夹"
+          />
+        );
+      case 'folder-heading':
+        if (!sortedDirectory) {
+          return null;
+        }
 
-    if (sortedDirectory.folders.length === 0) {
-      return <EmptyLine text="当前目录没有子文件夹" />;
-    }
-
-    const folderRows = chunkFolderGridRows(sortedDirectory.folders, folderGridColumnCount);
-
-    return (
-      <View onLayout={handleFolderGridLayout} style={styles.folderGridMeasure}>
-        {folderGridWidth > 0 ? (
-          <View
-            key={`${viewMode}-${folderCardSize}`}
-            style={[styles.folderGrid, folderGridLayoutStyle]}
-          >
-            {folderRows.map((row, rowIndex) => (
+        return (
+          <View style={styles.section}>
+            <SectionHeading
+              count={sortedDirectory.folders.length}
+              title="文件夹"
+              trailing={
+                <PathPillRow
+                  compact
+                  disabled={false}
+                  fallbackLabel={sortedDirectory.path || '根目录'}
+                  items={currentPathItems}
+                  onOpenFolderId={handleOpenPathFolder}
+                  onOpenRoot={handleOpenRootPath}
+                />
+              }
+            />
+          </View>
+        );
+      case 'folder-empty':
+        return <EmptyLine text="当前目录没有子文件夹" />;
+      case 'folder-row':
+        return (
+          <View onLayout={handleFolderGridLayout} style={styles.folderGridMeasure}>
+            {folderGridWidth > 0 ? (
               <View
-                key={`${viewMode}-${folderCardSize}-folder-row-${rowIndex}`}
-                style={[styles.folderGridRow, folderGridModeStyle]}
+                key={`${viewMode}-${folderCardSize}-${item.key}`}
+                style={[styles.folderGrid, folderGridLayoutStyle]}
               >
-                {row.map((folder) => (
-                  <FolderCard
-                    authCode={session.tokens.authCode}
-                    baseUrl={session.serverUrl}
-                    cacheEnabled={cacheEnabled}
-                    cacheFolder={cacheFolder}
-                    cardLayoutStyle={folderCardLayoutStyle}
-                    cardSize={folderCardSize}
-                    folder={folder}
-                    key={folder.id || folder.path}
-                    onLongSelect={() => toggleSelection(createFolderSelectionKey(folder))}
-                    onOpen={handleOpenFolder}
-                    onRename={() => openFolderDialog('rename', folder)}
-                    onSetCover={() => openCoverDialog(folder)}
-                    onToggleSelection={() => toggleSelection(createFolderSelectionKey(folder))}
-                    selected={selectedKeys.has(createFolderSelectionKey(folder))}
-                    selectionMode={selectionMode}
-                    showCover={showFolderCovers}
-                    viewMode={viewMode}
-                  />
-                ))}
-                {Array.from({ length: folderGridColumnCount - row.length }).map((_, placeholderIndex) => (
-                  <View
-                    key={`${viewMode}-${folderCardSize}-folder-placeholder-${rowIndex}-${placeholderIndex}`}
-                    pointerEvents="none"
-                    style={[styles.folderCardPlaceholder, folderCardLayoutStyle]}
-                  />
-                ))}
+                <View style={[styles.folderGridRow, folderGridModeStyle]}>
+                  {item.folders.map((folder) => (
+                    <FolderCard
+                      authCode={session.tokens.authCode}
+                      baseUrl={session.serverUrl}
+                      cacheEnabled={cacheEnabled}
+                      cacheFolder={cacheFolder}
+                      cardLayoutStyle={folderCardLayoutStyle}
+                      cardSize={folderCardSize}
+                      folder={folder}
+                      key={folder.id || folder.path}
+                      onLongSelect={() => toggleSelection(createFolderSelectionKey(folder))}
+                      onOpen={handleOpenFolder}
+                      onRename={() => openFolderDialog('rename', folder)}
+                      onSetCover={() => openCoverDialog(folder)}
+                      onToggleSelection={() => toggleSelection(createFolderSelectionKey(folder))}
+                      selected={selectedKeys.has(createFolderSelectionKey(folder))}
+                      selectionMode={selectionMode}
+                      showCover={showFolderCovers}
+                      thumbnailsEnabled={loadedDirectoryThumbnailKeys.has(createFolderThumbnailKey(folder))}
+                      viewMode={viewMode}
+                    />
+                  ))}
+                  {Array.from({ length: item.placeholderCount }).map((_, placeholderIndex) => (
+                    <View
+                      key={`${viewMode}-${folderCardSize}-${item.key}-placeholder-${placeholderIndex}`}
+                      pointerEvents="none"
+                      style={[styles.folderCardPlaceholder, folderCardLayoutStyle]}
+                    />
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </View>
+        );
+      case 'file-heading':
+        return (
+          <View style={styles.section}>
+            <SectionHeading count={item.count} title="文件" />
+          </View>
+        );
+      case 'file-empty':
+        return <EmptyLine text="当前目录没有直接文件" />;
+      case 'file-group-heading':
+        return (
+          <View style={styles.sectionHeading}>
+            <Text style={styles.fileGroupTitle}>{item.group.day}</Text>
+            <Text style={styles.sectionCount}>
+              {item.group.addr ? `${item.group.addr} · ` : ''}{item.group.list.length} 个文件
+            </Text>
+          </View>
+        );
+      case 'media-file-row':
+        return (
+          <View style={styles.mediaWaterfall}>
+            {item.files.map((file) => (
+              <View key={file.id || file.md5 || file.name} style={styles.mediaWaterfallColumn}>
+                <FileTile
+                  authCode={session.tokens.authCode}
+                  baseUrl={session.serverUrl}
+                  cacheEnabled={cacheEnabled}
+                  cacheFolder={cacheFolder}
+                  cardSize={folderCardSize}
+                  file={file}
+                  onLongSelect={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
+                  onPreviewFile={handlePreviewFile}
+                  onToggleSelection={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
+                  selected={selectedKeys.has(createFileSelectionKey(file))}
+                  selectionMode={selectionMode}
+                  thumbnailsEnabled={loadedDirectoryThumbnailKeys.has(createFileThumbnailKey(file))}
+                  viewMode={viewMode}
+                  waterfall
+                />
               </View>
             ))}
+            {Array.from({ length: item.placeholderCount }).map((_, placeholderIndex) => (
+              <View
+                key={`${item.key}-placeholder-${placeholderIndex}`}
+                pointerEvents="none"
+                style={styles.mediaWaterfallColumn}
+              />
+            ))}
           </View>
-        ) : null}
-      </View>
-    );
-  };
-
-  const renderFileSections = () => {
-    if (!sortedDirectory) {
-      return null;
+        );
+      case 'normal-file-row':
+        return (
+          <View style={viewMode === 'list' ? styles.fileList : styles.fileGrid}>
+            {item.files.map((file) => (
+              <FileTile
+                authCode={session.tokens.authCode}
+                baseUrl={session.serverUrl}
+                cacheEnabled={cacheEnabled}
+                cacheFolder={cacheFolder}
+                cardSize={folderCardSize}
+                file={file}
+                key={file.id || file.md5 || file.name}
+                onLongSelect={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
+                onPreviewFile={handlePreviewFile}
+                onToggleSelection={(nextFile) => toggleSelection(createFileSelectionKey(nextFile))}
+                selected={selectedKeys.has(createFileSelectionKey(file))}
+                selectionMode={selectionMode}
+                thumbnailsEnabled={loadedDirectoryThumbnailKeys.has(createFileThumbnailKey(file))}
+                viewMode={viewMode}
+              />
+            ))}
+          </View>
+        );
+      default:
+        return null;
     }
-
-    if (sortedDirectory.files.length === 0) {
-      return <EmptyLine text="当前目录没有直接文件" />;
-    }
-
-    return sortedDirectory.files.map((group) => (
-      <FileGroupPreview
-        authCode={session.tokens.authCode}
-        baseUrl={session.serverUrl}
-        cacheEnabled={cacheEnabled}
-        cacheFolder={cacheFolder}
-        cardSize={folderCardSize}
-        group={group}
-        key={`${group.day}-${group.addr ?? ''}`}
-        onLongSelect={(file) => toggleSelection(createFileSelectionKey(file))}
-        onPreviewFile={handlePreviewFile}
-        onToggleSelection={(file) => toggleSelection(createFileSelectionKey(file))}
-        selectedKeys={selectedKeys}
-        selectionMode={selectionMode}
-        viewMode={viewMode}
-      />
-    ));
   };
 
   const renderPreviewChrome = () => (
     <>
       <View style={styles.previewHeader}>
         <Pressable onPress={closePreview} style={styles.previewBackButton}>
-          <Ionicons color="#fff" name="chevron-back" size={24} />
+          <Ionicons color={MOBILE_SAGE_SLATE.strong} name="close" size={21} />
+        </Pressable>
+        <Pressable
+          accessibilityLabel={previewActionLabel}
+          disabled={previewActionDisabled}
+          onPress={() => void handleTogglePreviewMode()}
+          style={[styles.previewOriginalAction, previewActionDisabled ? styles.previewToolButtonDisabled : null]}
+        >
+          <Ionicons color={MOBILE_SAGE_SLATE.title} name={previewImageShowsOriginal ? 'image' : 'image-outline'} size={16} />
+          <Text numberOfLines={1} style={styles.previewOriginalActionText}>{previewActionLabel}</Text>
         </Pressable>
         <ScrollView
           contentContainerStyle={styles.previewToolbar}
@@ -2232,23 +2473,24 @@ const MobileFolderDirectoryScreen = ({
             disabled={!previewFile}
             icon="options-outline"
             label="显示设置"
-            onPress={() => setPreviewSettingsOpen((open) => !open)}
-          />
-          <PreviewToolbarButton
-            active={previewImageShowsOriginal}
-            disabled={!previewFile || previewIsVideo || !previewOriginalUrl || Boolean(previewBusyAction)}
-            icon={previewImageShowsOriginal ? 'image' : 'image-outline'}
-            label={previewImageShowsOriginal ? '返回预览图' : '查看原图'}
-            onPress={() => void handleTogglePreviewMode()}
+            active={previewSettingsOpen}
+            onPress={() => {
+              setPreviewMoreOpen(false);
+              setPreviewSettingsOpen((open) => !open);
+            }}
           />
           <PreviewToolbarButton
             active={previewInfoVisible}
             disabled={!previewFile}
             icon="information-circle-outline"
             label="信息"
-            onPress={() => setPreviewInfoVisible((visible) => !visible)}
+            onPress={() => {
+              setPreviewMoreOpen(false);
+              setPreviewInfoVisible((visible) => !visible);
+            }}
           />
           <PreviewToolbarButton
+            active={previewMoreOpen}
             disabled={!previewFile || Boolean(previewBusyAction)}
             icon="ellipsis-vertical"
             label="更多"
@@ -2274,6 +2516,23 @@ const MobileFolderDirectoryScreen = ({
           onToggleMode={() => void handleTogglePreviewMode()}
           videoUsesTranscode={Boolean(previewFile && previewIsVideo && !isDirectVideoPreviewSupported(previewFile))}
           videoPreparing={videoPreparing}
+        />
+      ) : null}
+      {previewMoreOpen ? (
+        <PreviewMorePanel
+          busy={Boolean(previewBusyAction)}
+          onRefreshDescriptor={() => {
+            setPreviewMoreOpen(false);
+            void handleRefreshPreviewDescriptor();
+          }}
+          onRefreshInfo={() => {
+            setPreviewMoreOpen(false);
+            void handleRefreshPreviewInfo();
+          }}
+          onRefreshThumbs={() => {
+            setPreviewMoreOpen(false);
+            void handleRefreshPreviewThumbs();
+          }}
         />
       ) : null}
     </>
@@ -2351,48 +2610,22 @@ const MobileFolderDirectoryScreen = ({
         />
       ) : null}
 
-      <MobilePullRefreshScrollView
+      <FlatList
         contentContainerStyle={styles.content}
-        onRefresh={() => loadDirectory(currentFolderId, 'refreshing')}
+        data={directoryListItems}
+        initialNumToRender={DIRECTORY_LIST_INITIAL_RENDER_COUNT}
+        keyExtractor={(item) => item.key}
+        maxToRenderPerBatch={DIRECTORY_LIST_MAX_RENDER_BATCH}
+        onRefresh={() => {
+          void loadDirectory(currentFolderId, 'refreshing');
+        }}
+        onViewableItemsChanged={handleViewableDirectoryItemsChanged}
         refreshing={refreshing}
+        renderItem={renderDirectoryListItem}
         showsVerticalScrollIndicator={false}
-        theme={theme}
-      >
-        {isInitialLoading ? (
-          <MobileLoadingState
-            description="同步目录、封面和本地缓存状态"
-            icon="folder-outline"
-            title="正在加载文件夹"
-          />
-        ) : null}
-
-        {sortedDirectory ? (
-          <>
-            <View style={styles.section}>
-              <SectionHeading
-                count={sortedDirectory.folders.length}
-                title="文件夹"
-                trailing={
-                  <PathPillRow
-                    compact
-                    disabled={false}
-                    fallbackLabel={sortedDirectory.path || '根目录'}
-                    items={currentPathItems}
-                    onOpenFolderId={handleOpenPathFolder}
-                    onOpenRoot={handleOpenRootPath}
-                  />
-                }
-              />
-              {renderFolderSection()}
-            </View>
-
-            <View style={styles.section}>
-              <SectionHeading count={fileCount} title="文件" />
-              {renderFileSections()}
-            </View>
-          </>
-        ) : null}
-      </MobilePullRefreshScrollView>
+        viewabilityConfig={directoryListViewabilityConfig}
+        windowSize={7}
+      />
 
       <FolderFloatingMenu
         canCreateFolder={currentFolderId !== undefined}
@@ -2468,7 +2701,7 @@ const MobileFolderDirectoryScreen = ({
         transparent
         visible={Boolean(previewFile && !previewUsesImageViewer)}
       >
-        <View style={[styles.previewOverlay, previewSafeAreaStyle]}>
+        <View {...previewPanResponder.panHandlers} style={[styles.previewOverlay, previewSafeAreaStyle]}>
           {renderPreviewChrome()}
           {previewFile && previewIsVideo ? (
             previewMode === 'original' ? (
@@ -3252,6 +3485,61 @@ const PreviewToolbarButton = ({
   );
 };
 
+/**
+ * Renders the preview more menu as an in-app floating panel instead of a native alert.
+ */
+const PreviewMorePanel = ({
+  busy,
+  onRefreshDescriptor,
+  onRefreshInfo,
+  onRefreshThumbs,
+}: PreviewMorePanelProps) => {
+  return (
+    <View style={styles.previewMorePanel}>
+      <PreviewMoreButton
+        disabled={busy}
+        icon="scan-outline"
+        label="刷新人脸识别"
+        onPress={onRefreshDescriptor}
+      />
+      <PreviewMoreButton
+        disabled={busy}
+        icon="images-outline"
+        label="刷新缩略图"
+        onPress={onRefreshThumbs}
+      />
+      <PreviewMoreButton
+        disabled={busy}
+        icon="information-circle-outline"
+        label="刷新 EXIF 信息"
+        onPress={onRefreshInfo}
+      />
+    </View>
+  );
+};
+
+const PreviewMoreButton = ({
+  disabled = false,
+  icon,
+  label,
+  onPress,
+}: {
+  disabled?: boolean;
+  icon: FolderFabIconName;
+  label: string;
+  onPress: () => void;
+}) => (
+  <Pressable
+    accessibilityLabel={label}
+    disabled={disabled}
+    onPress={onPress}
+    style={[styles.previewMoreButton, disabled ? styles.previewToolButtonDisabled : null]}
+  >
+    <Ionicons color={MOBILE_SAGE_SLATE.muted} name={icon} size={18} />
+    <Text style={styles.previewMoreButtonText}>{label}</Text>
+  </Pressable>
+);
+
 const PreviewSettingsPanel = ({
   actionDisabled,
   actionLabel,
@@ -3277,15 +3565,17 @@ const PreviewSettingsPanel = ({
   videoUsesTranscode: boolean;
   videoPreparing: boolean;
 }) => {
+  const theme = useMobileTheme();
+
   return (
-    <View style={styles.previewSettingsPanel}>
+    <View style={[styles.previewSettingsPanel, { borderColor: theme.selection }, MOBILE_SAGE_SHADOWS.floating]}>
       <View style={styles.previewSettingsHeader}>
         <View>
           <Text style={styles.previewSettingsTitle}>显示设置</Text>
           <Text style={styles.previewSettingsMeta}>当前来源：{cacheLabel}</Text>
         </View>
         <Pressable onPress={onClose} style={styles.previewSettingsClose}>
-          <Ionicons color="#fff" name="close" size={18} />
+          <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close" size={18} />
         </Pressable>
       </View>
       <PreviewSettingRow
@@ -3343,16 +3633,25 @@ const PreviewSettingRow = ({
   meta,
   onPress,
 }: PreviewSettingRowProps) => {
+  const theme = useMobileTheme();
   const content = (
     <>
-      <View style={[styles.previewSettingIcon, active ? styles.previewSettingIconActive : null]}>
-        <Ionicons color={active ? '#fff' : '#cbd5e1'} name={icon} size={17} />
+      <View style={[
+        styles.previewSettingIcon,
+        active ? styles.previewSettingIconActive : null,
+        active ? { backgroundColor: theme.hex } : null,
+      ]}>
+        <Ionicons color={active ? '#fff' : MOBILE_SAGE_SLATE.subtle} name={icon} size={17} />
       </View>
       <View style={styles.previewSettingCopy}>
         <Text style={styles.previewSettingTitle}>{label}</Text>
         <Text style={styles.previewSettingMeta}>{meta}</Text>
       </View>
-      <View style={[styles.previewSettingSwitch, active ? styles.previewSettingSwitchActive : null]}>
+      <View style={[
+        styles.previewSettingSwitch,
+        active ? styles.previewSettingSwitchActive : null,
+        active ? { backgroundColor: theme.hex } : null,
+      ]}>
         <View style={[styles.previewSettingSwitchThumb, active ? styles.previewSettingSwitchThumbActive : null]} />
       </View>
     </>
@@ -3471,6 +3770,7 @@ const FolderCard = ({
   selected,
   selectionMode,
   showCover,
+  thumbnailsEnabled,
   viewMode,
 }: {
   authCode?: string;
@@ -3488,6 +3788,7 @@ const FolderCard = ({
   selected: boolean;
   selectionMode: boolean;
   showCover: boolean;
+  thumbnailsEnabled: boolean;
   viewMode: MobileFolderViewMode;
 }) => {
   const theme = useMobileTheme();
@@ -3515,7 +3816,7 @@ const FolderCard = ({
   const shouldMergeFolderMeta = isListMode || cardSize === 'large';
   const showFolderPath = isListMode || cardSize !== 'small';
   const showFolderMeta = cardSize !== 'small' || isListMode;
-  const showCoverIcon = coverItems.length === 0;
+  const showCoverIcon = !thumbnailsEnabled || coverItems.length === 0;
   const folderPathLines = cardSize === 'large' ? 2 : 1;
   const folderCoverIconSize = isListMode
     ? cardSize === 'large'
@@ -3528,9 +3829,8 @@ const FolderCard = ({
       : cardSize === 'small'
         ? 18
         : 22;
-  const coverBackgroundColor = coverItems.length > 0 && folder.coverFallback
-    ? folder.coverFallback
-    : theme.selection;
+  const visibleCoverItems = coverItems.slice(0, MAX_FOLDER_COVER_COUNT);
+  const coverBackgroundColor = theme.selection;
 
   return (
     <Pressable
@@ -3581,19 +3881,22 @@ const FolderCard = ({
           </View>
         ) : null}
         <Text style={[styles.folderCount, cardSize === 'small' ? styles.smallFolderCount : null]}>{contentCount}</Text>
-        {coverItems.length > 0 ? (
-          <View style={[styles.folderCoverImages, coverItems.length === 1 ? styles.folderCoverImagesSingle : null]}>
-            {coverItems.slice(0, 4).map((item) => (
+        {visibleCoverItems.length > 0 ? (
+          <View style={styles.folderCoverImages}>
+            {visibleCoverItems.map((item, index) => (
               <CachedMobileImage
                 cacheOnMiss
-                cacheEnabled={cacheEnabled}
+                cacheEnabled={cacheEnabled && thumbnailsEnabled}
                 cacheFolder={folderCoverCacheFolder}
                 kind="folder-cover"
                 key={item.md5}
                 md5={item.md5}
                 resizeMode="cover"
-                sourceUrl={item.url}
-                style={[styles.folderCoverImage, coverItems.length === 1 ? styles.folderCoverImageSingle : null]}
+                sourceUrl={thumbnailsEnabled ? item.url : undefined}
+                style={[
+                  styles.folderCoverImage,
+                  getMobileCoverImageLayoutStyle(index, visibleCoverItems.length),
+                ]}
                 variant="h220"
               />
             ))}
@@ -3716,6 +4019,27 @@ const FolderCard = ({
   );
 };
 
+/**
+ * Maps 1-4 cover images to the same collage rules used by Web and desktop.
+ * @param imageIndex Current cover image index.
+ * @param imageCount Visible cover image count.
+ */
+const getMobileCoverImageLayoutStyle = (imageIndex: number, imageCount: number): ImageStyle => {
+  if (imageCount <= 1) {
+    return styles.folderCoverImageFull;
+  }
+
+  if (imageCount === 2) {
+    return styles.folderCoverImageDouble;
+  }
+
+  if (imageCount === 3 && imageIndex === 0) {
+    return styles.folderCoverImageTriplePrimary;
+  }
+
+  return styles.folderCoverImage;
+};
+
 const FileGroupPreview = ({
   authCode,
   baseUrl,
@@ -3723,6 +4047,7 @@ const FileGroupPreview = ({
   cacheFolder,
   cardSize,
   group,
+  loadedThumbnailKeys,
   onLongSelect,
   onPreviewFile,
   onToggleSelection,
@@ -3736,6 +4061,7 @@ const FileGroupPreview = ({
   cacheFolder: MobileLocalCacheFolderRef;
   cardSize: MobileFolderCardSize;
   group: FolderFileGroup;
+  loadedThumbnailKeys: ReadonlySet<string>;
   onLongSelect: (file: FolderFileSummary) => void;
   onPreviewFile: (file: FolderFileSummary) => void;
   onToggleSelection: (file: FolderFileSummary) => void;
@@ -3773,6 +4099,7 @@ const FileGroupPreview = ({
                   onToggleSelection={onToggleSelection}
                   selected={selectedKeys.has(createFileSelectionKey(file))}
                   selectionMode={selectionMode}
+                  thumbnailsEnabled={loadedThumbnailKeys.has(createFileThumbnailKey(file))}
                   viewMode={viewMode}
                   waterfall
                 />
@@ -3797,6 +4124,7 @@ const FileGroupPreview = ({
               onToggleSelection={onToggleSelection}
               selected={selectedKeys.has(createFileSelectionKey(file))}
               selectionMode={selectionMode}
+              thumbnailsEnabled={loadedThumbnailKeys.has(createFileThumbnailKey(file))}
               viewMode={viewMode}
             />
           ))}
@@ -3818,6 +4146,7 @@ const FileTile = ({
   onToggleSelection,
   selected,
   selectionMode,
+  thumbnailsEnabled,
   viewMode,
   waterfall = false,
 }: {
@@ -3832,6 +4161,7 @@ const FileTile = ({
   onToggleSelection: (file: FolderFileSummary) => void;
   selected: boolean;
   selectionMode: boolean;
+  thumbnailsEnabled: boolean;
   viewMode: MobileFolderViewMode;
   waterfall?: boolean;
 }) => {
@@ -3844,12 +4174,12 @@ const FileTile = ({
   });
   const thumbnailCache = useCachedMobileMediaUri({
     cacheOnMiss: true,
-    enabled: cacheEnabled,
+    enabled: cacheEnabled && thumbnailsEnabled,
     fileId: file.id,
     folder: cacheFolder,
     kind: 'file-thumbnail',
     md5: file.md5,
-    sourceUrl: thumbnailUrl,
+    sourceUrl: thumbnailsEnabled ? thumbnailUrl : undefined,
     variant: isVideoFile(file) ? 'poster' : 'h220',
   });
   const [loadedThumbnailAspectRatio, setLoadedThumbnailAspectRatio] = useState<number | undefined>();
@@ -4438,6 +4768,156 @@ const EmptyLine = ({ text }: { text: string }) => {
 };
 
 /**
+ * Flattens the directory into virtual-list rows so thumbnails can be enabled by row viewability.
+ */
+const createDirectoryListItems = ({
+  cardSize,
+  directory,
+  folderColumnCount,
+  initialLoading,
+  viewMode,
+}: {
+  cardSize: MobileFolderCardSize;
+  directory?: FolderDirectory;
+  folderColumnCount: number;
+  initialLoading: boolean;
+  viewMode: MobileFolderViewMode;
+}): DirectoryListItem[] => {
+  if (initialLoading) {
+    return [{ key: 'initial-loading', type: 'initial-loading' }];
+  }
+
+  if (!directory) {
+    return [];
+  }
+
+  const folderRows = chunkFolderGridRows(directory.folders, folderColumnCount);
+  const fileCount = directory.files.reduce((sum, group) => sum + group.list.length, 0);
+  const mediaColumnCount = getMediaWaterfallColumnCount(cardSize);
+  const normalColumnCount = viewMode === 'list' ? 1 : FOLDER_GRID_COLUMN_COUNT[cardSize];
+
+  return [
+    { key: 'folder-heading', type: 'folder-heading' },
+    ...(folderRows.length > 0
+      ? folderRows.map((folders, index) => ({
+          folders,
+          key: `folder-row-${index}-${folders.map((folder) => folder.id || folder.path).join('-')}`,
+          placeholderCount: Math.max(0, folderColumnCount - folders.length),
+          type: 'folder-row' as const,
+        }))
+      : [{ key: 'folder-empty', type: 'folder-empty' as const }]),
+    { count: fileCount, key: 'file-heading', type: 'file-heading' },
+    ...(directory.files.length > 0
+      ? directory.files.flatMap((group, groupIndex) => {
+          const groupKey = createFileGroupListKey(group, groupIndex);
+          const mediaRows = chunkFileGridRows(group.list.filter(isMediaFile), mediaColumnCount);
+          const normalRows = chunkFileGridRows(
+            group.list.filter((file) => !isMediaFile(file)),
+            normalColumnCount,
+          );
+
+          return [
+            { group, key: `file-group-heading-${groupKey}`, type: 'file-group-heading' as const },
+            ...mediaRows.map((files, rowIndex) => ({
+              files,
+              key: `media-file-row-${groupKey}-${rowIndex}-${files.map(createFileThumbnailKey).join('-')}`,
+              placeholderCount: Math.max(0, mediaColumnCount - files.length),
+              type: 'media-file-row' as const,
+            })),
+            ...normalRows.map((files, rowIndex) => ({
+              files,
+              key: `normal-file-row-${groupKey}-${rowIndex}-${files.map(createFileThumbnailKey).join('-')}`,
+              placeholderCount: Math.max(0, normalColumnCount - files.length),
+              type: 'normal-file-row' as const,
+            })),
+          ];
+        })
+      : [{ key: 'file-empty', type: 'file-empty' as const }]),
+  ];
+};
+
+/**
+ * Collects thumbnail identities for the visible row and its nearby rows.
+ */
+const getNearbyDirectoryThumbnailKeys = ({
+  centerIndex,
+  items,
+  radius,
+}: {
+  centerIndex: number;
+  items: DirectoryListItem[];
+  radius: number;
+}): string[] => {
+  if (centerIndex < 0) {
+    return [];
+  }
+
+  const startIndex = Math.max(0, centerIndex - radius);
+  const endIndex = Math.min(items.length - 1, centerIndex + radius);
+  const keys: string[] = [];
+
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    keys.push(...getDirectoryItemThumbnailKeys(items[index]));
+  }
+
+  return keys;
+};
+
+/**
+ * Returns the thumbnail cache keys represented by one virtual-list item.
+ */
+const getDirectoryItemThumbnailKeys = (item?: DirectoryListItem): string[] => {
+  if (!item) {
+    return [];
+  }
+
+  if (item.type === 'folder-row') {
+    return item.folders.map(createFolderThumbnailKey);
+  }
+
+  if (item.type === 'media-file-row' || item.type === 'normal-file-row') {
+    return item.files.map(createFileThumbnailKey);
+  }
+
+  return [];
+};
+
+/**
+ * Creates a stable virtual-list key for one backend file group.
+ */
+const createFileGroupListKey = (group: FolderFileGroup, index: number): string => {
+  return `${index}-${group.day}-${group.addr ?? ''}-${group.list.length}`;
+};
+
+/**
+ * Creates a stable key for enabling one folder cover thumbnail set near the viewport.
+ */
+const createFolderThumbnailKey = (folder: FolderSummary): string => {
+  return `folder:${folder.id || folder.path}:${folder.coverHashes.join(',')}`;
+};
+
+/**
+ * Creates a stable key for enabling one file thumbnail near the viewport.
+ */
+const createFileThumbnailKey = (file: FolderFileSummary): string => {
+  return `file:${file.id || file.md5 || file.name}:${file.md5}:${isVideoFile(file) ? 'poster' : 'h220'}`;
+};
+
+/**
+ * Splits file thumbnails into fixed virtual rows for FlatList rendering.
+ */
+const chunkFileGridRows = (files: FolderFileSummary[], columnCount: number): FolderFileSummary[][] => {
+  const safeColumnCount = Math.max(1, columnCount);
+  const rows: FolderFileSummary[][] = [];
+
+  for (let index = 0; index < files.length; index += safeColumnCount) {
+    rows.push(files.slice(index, index + safeColumnCount));
+  }
+
+  return rows;
+};
+
+/**
  * Picks the nearby gallery entries that should be ready before the user swipes.
  */
 const getPreviewWarmThumbnailItems = (
@@ -4856,6 +5336,37 @@ const isVideoFile = (file: FolderFileSummary): boolean => {
  */
 const isDirectVideoPreviewSupported = (file?: FolderFileSummary): boolean => {
   return Boolean(file && DIRECT_VIDEO_PREVIEW_TYPES.has(normalizePreviewFileType(file.fileType)));
+};
+
+/**
+ * Starts gesture handling only after a clear fullscreen preview swipe is detected.
+ */
+const shouldCapturePreviewGesture = (gestureState: PanResponderGestureState): boolean => {
+  return Boolean(getPreviewGestureAction(gestureState));
+};
+
+/**
+ * Maps fullscreen preview drag distance to the same actions as the close and step buttons.
+ */
+const getPreviewGestureAction = (gestureState: PanResponderGestureState): PreviewGestureAction | undefined => {
+  const absX = Math.abs(gestureState.dx);
+  const absY = Math.abs(gestureState.dy);
+
+  if (
+    gestureState.dy > PREVIEW_SWIPE_CLOSE_DISTANCE &&
+    gestureState.dy > absX * PREVIEW_SWIPE_DIRECTION_RATIO
+  ) {
+    return 'close';
+  }
+
+  if (
+    absX > PREVIEW_SWIPE_STEP_DISTANCE &&
+    absX > absY * PREVIEW_SWIPE_DIRECTION_RATIO
+  ) {
+    return gestureState.dx > 0 ? 'previous' : 'next';
+  }
+
+  return undefined;
 };
 
 /**
@@ -5751,8 +6262,16 @@ const styles = StyleSheet.create({
     height: '50%',
     width: '50%',
   },
-  folderCoverImageSingle: {
+  folderCoverImageDouble: {
     height: '100%',
+    width: '50%',
+  },
+  folderCoverImageFull: {
+    height: '100%',
+    width: '100%',
+  },
+  folderCoverImageTriplePrimary: {
+    height: '50%',
     width: '100%',
   },
   folderCoverImages: {
@@ -5763,9 +6282,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     top: 0,
-  },
-  folderCoverImagesSingle: {
-    flexWrap: 'nowrap',
   },
   folderGrid: {
     gap: FOLDER_GRID_GAP,
@@ -6058,7 +6574,7 @@ const styles = StyleSheet.create({
   previewAlbumDialog: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.panel,
     borderColor: MOBILE_SAGE_NEUTRALS.border,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     gap: 12,
     maxHeight: '78%',
@@ -6117,13 +6633,14 @@ const styles = StyleSheet.create({
   },
   previewBackButton: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    borderColor: 'rgba(255, 255, 255, 0.18)',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    borderColor: 'rgba(226, 232, 240, 0.86)',
     borderRadius: 999,
     borderWidth: 1,
-    height: 38,
+    height: 36,
     justifyContent: 'center',
-    width: 38,
+    width: 36,
+    ...MOBILE_SAGE_SHADOWS.panel,
   },
   previewCloseButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.16)',
@@ -6162,11 +6679,11 @@ const styles = StyleSheet.create({
   previewHeader: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     paddingBottom: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingTop: 8,
-    zIndex: 4,
+    zIndex: 8,
   },
   previewHeaderCopy: {
     flex: 1,
@@ -6286,7 +6803,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   previewInfoError: {
-    color: '#fecaca',
+    color: '#dc2626',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -6296,7 +6813,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   previewInfoLabel: {
-    color: '#94a3b8',
+    color: MOBILE_SAGE_SLATE.subtle,
     flex: 0.34,
     fontSize: 11,
     fontWeight: '800',
@@ -6311,27 +6828,31 @@ const styles = StyleSheet.create({
   },
   previewInfoPanel: {
     alignSelf: 'stretch',
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
-    borderColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderColor: 'rgba(226, 232, 240, 0.88)',
     borderRadius: 16,
     borderWidth: 1,
     gap: 8,
     padding: 12,
+    ...MOBILE_SAGE_SHADOWS.floating,
   },
   previewInfoRow: {
+    borderBottomColor: 'rgba(226, 232, 240, 0.72)',
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 8,
+    paddingBottom: 6,
   },
   previewInfoRows: {
     gap: 4,
   },
   previewInfoTitle: {
-    color: '#e2e8f0',
+    color: MOBILE_SAGE_SLATE.title,
     fontSize: 12,
     fontWeight: '900',
   },
   previewInfoValue: {
-    color: '#f8fafc',
+    color: MOBILE_SAGE_SLATE.strong,
     flex: 1,
     fontSize: 11,
     fontWeight: '800',
@@ -6359,6 +6880,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
+  previewMoreButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    flexDirection: 'row',
+    gap: 9,
+    minHeight: 38,
+    paddingHorizontal: 10,
+  },
+  previewMoreButtonText: {
+    color: MOBILE_SAGE_SLATE.body,
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  previewMorePanel: {
+    backgroundColor: '#fff',
+    borderColor: 'rgba(226, 232, 240, 0.9)',
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 2,
+    padding: 8,
+    position: 'absolute',
+    right: 10,
+    top: 124,
+    width: 190,
+    zIndex: 7,
+    ...MOBILE_SAGE_SHADOWS.floating,
+  },
   previewOpenButton: {
     alignItems: 'center',
     alignSelf: 'center',
@@ -6378,23 +6927,44 @@ const styles = StyleSheet.create({
     backgroundColor: '#020617',
     flex: 1,
   },
+  previewOriginalAction: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    borderColor: 'rgba(226, 232, 240, 0.86)',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    height: 36,
+    justifyContent: 'center',
+    maxWidth: 122,
+    minWidth: 0,
+    paddingHorizontal: 10,
+    ...MOBILE_SAGE_SHADOWS.panel,
+  },
+  previewOriginalActionText: {
+    color: MOBILE_SAGE_SLATE.title,
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: '900',
+  },
   previewSettingCopy: {
     flex: 1,
     minWidth: 0,
   },
   previewSettingIcon: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.control,
     borderRadius: 999,
     height: 34,
     justifyContent: 'center',
     width: 34,
   },
   previewSettingIconActive: {
-    backgroundColor: 'rgba(167, 139, 250, 0.42)',
+    backgroundColor: '#16b741',
   },
   previewSettingMeta: {
-    color: '#94a3b8',
+    color: MOBILE_SAGE_SLATE.subtle,
     fontSize: 11,
     fontWeight: '700',
     lineHeight: 15,
@@ -6402,8 +6972,8 @@ const styles = StyleSheet.create({
   },
   previewSettingRow: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.panelAlt,
+    borderColor: MOBILE_SAGE_NEUTRALS.borderSoft,
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: 'row',
@@ -6411,8 +6981,8 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   previewSettingRowActive: {
-    backgroundColor: 'rgba(167, 139, 250, 0.16)',
-    borderColor: 'rgba(196, 181, 253, 0.2)',
+    backgroundColor: '#f8fafc',
+    borderColor: 'rgba(203, 213, 225, 0.92)',
   },
   previewSettingRowDisabled: {
     opacity: 0.5,
@@ -6425,7 +6995,7 @@ const styles = StyleSheet.create({
     width: 34,
   },
   previewSettingSwitchActive: {
-    backgroundColor: 'rgba(167, 139, 250, 0.78)',
+    backgroundColor: '#16b741',
   },
   previewSettingSwitchThumb: {
     alignSelf: 'flex-start',
@@ -6439,12 +7009,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   previewSettingTitle: {
-    color: '#fff',
+    color: MOBILE_SAGE_SLATE.title,
     fontSize: 13,
     fontWeight: '900',
   },
   previewSettingsClose: {
     alignItems: 'center',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.control,
+    borderRadius: 999,
     height: 30,
     justifyContent: 'center',
     width: 30,
@@ -6456,28 +7028,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   previewSettingsMeta: {
-    color: '#cbd5e1',
+    color: MOBILE_SAGE_SLATE.subtle,
     fontSize: 11,
     fontWeight: '700',
     marginTop: 2,
   },
   previewSettingsPanel: {
     alignSelf: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.94)',
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 18,
+    backgroundColor: '#fff',
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 16,
     borderWidth: 1,
     gap: 10,
-    padding: 12,
+    left: 10,
+    padding: 14,
     position: 'absolute',
-    right: 12,
-    top: 58,
-    maxWidth: '92%',
-    width: 310,
-    zIndex: 5,
+    right: 10,
+    top: 124,
+    zIndex: 7,
   },
   previewSettingsTitle: {
-    color: '#fff',
+    color: MOBILE_SAGE_SLATE.title,
     fontSize: 14,
     fontWeight: '900',
   },
@@ -6512,7 +7083,7 @@ const styles = StyleSheet.create({
   previewToolbar: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 5,
     justifyContent: 'flex-end',
     paddingRight: 2,
   },
@@ -6521,13 +7092,13 @@ const styles = StyleSheet.create({
   },
   previewToolButton: {
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.44)',
+    backgroundColor: 'rgba(15, 23, 42, 0.34)',
     borderColor: 'rgba(255, 255, 255, 0.18)',
     borderRadius: 999,
     borderWidth: 1,
-    height: 38,
+    height: 36,
     justifyContent: 'center',
-    width: 38,
+    width: 36,
   },
   previewToolButtonActive: {
     backgroundColor: 'rgba(22, 183, 65, 0.78)',
