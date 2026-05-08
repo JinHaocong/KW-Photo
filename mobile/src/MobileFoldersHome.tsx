@@ -245,6 +245,7 @@ interface PreviewDisplayedImageUriState {
 
 const FOLDER_CONTENT_BOTTOM_TABBAR_PADDING = 132;
 const FOLDER_CONTENT_BOTTOM_TABBAR_SAFE_AREA_OFFSET = 98;
+const INFUSE_APP_ICON_SOURCE = require("../assets/infuse-icon.jpg");
 
 const FolderStack = createNativeStackNavigator<MobileFolderStackParamList>();
 const FOLDER_NAVIGATION_THEME: Theme = {
@@ -283,12 +284,14 @@ const renderExternalVideoPlayerIcon = (
 };
 
 /**
- * Displays a compact Infuse-specific icon without needing an extra image asset.
+ * Displays the bundled Infuse app icon in the preview toolbar.
  */
 const InfuseToolbarIcon = (): ReactElement => (
-  <View style={styles.previewExternalPlayerInfuseIcon}>
-    <Ionicons color="#fff" name="play" size={11} />
-  </View>
+  <Image
+    accessibilityIgnoresInvertColors
+    source={INFUSE_APP_ICON_SOURCE}
+    style={styles.previewExternalPlayerInfuseIcon}
+  />
 );
 
 /**

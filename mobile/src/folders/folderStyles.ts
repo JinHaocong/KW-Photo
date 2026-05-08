@@ -1304,14 +1304,12 @@ export const styles = StyleSheet.create({
     fontWeight: "900",
   },
   previewExternalPlayerInfuseIcon: {
-    alignItems: "center",
-    backgroundColor: "#f97316",
     borderColor: "rgba(255, 255, 255, 0.66)",
     borderRadius: 7,
     borderWidth: 1,
-    height: 20,
-    justifyContent: "center",
-    width: 20,
+    height: 22,
+    overflow: "hidden",
+    width: 22,
   },
   previewHeader: {
     alignItems: "center",
