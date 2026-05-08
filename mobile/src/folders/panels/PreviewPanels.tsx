@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import type { ReactElement } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { FileDetail, FolderFileSummary } from '@kwphoto/core';
@@ -20,6 +21,7 @@ interface PreviewToolbarButtonProps {
   busy?: boolean;
   disabled?: boolean;
   icon: FolderFabIconName;
+  iconElement?: ReactElement;
   label: string;
   onPress: () => void;
 }
@@ -64,6 +66,7 @@ export const PreviewToolbarButton = ({
   busy = false,
   disabled = false,
   icon,
+  iconElement,
   label,
   onPress,
 }: PreviewToolbarButtonProps) => {
@@ -80,6 +83,8 @@ export const PreviewToolbarButton = ({
     >
       {busy ? (
         <ActivityIndicator color="#fff" size="small" />
+      ) : iconElement ? (
+        iconElement
       ) : (
         <Ionicons color="#fff" name={icon} size={20} />
       )}

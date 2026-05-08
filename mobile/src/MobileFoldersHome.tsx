@@ -270,6 +270,28 @@ const FOLDER_STACK_SCREEN_OPTIONS: NativeStackNavigationOptions = {
 };
 
 /**
+ * Renders the configured external player's app badge for the preview toolbar.
+ */
+const renderExternalVideoPlayerIcon = (
+  player: MobileExternalVideoPlayer,
+): ReactElement | undefined => {
+  if (player === "infuse") {
+    return <InfuseToolbarIcon />;
+  }
+
+  return undefined;
+};
+
+/**
+ * Displays a compact Infuse-specific icon without needing an extra image asset.
+ */
+const InfuseToolbarIcon = (): ReactElement => (
+  <View style={styles.previewExternalPlayerInfuseIcon}>
+    <Ionicons color="#fff" name="play" size={11} />
+  </View>
+);
+
+/**
  * Hosts the native folder stack while the outer bottom tabs keep local state switching.
  */
 export const MobileFoldersHome = ({
@@ -2876,6 +2898,7 @@ const MobileFolderDirectoryScreen = ({
             <PreviewToolbarButton
               disabled={Boolean(previewBusyAction)}
               icon="open-outline"
+              iconElement={renderExternalVideoPlayerIcon(externalVideoPlayer)}
               label="Infuse"
               onPress={() => void handleOpenExternalVideoPlayer(previewFile)}
             />
@@ -3259,8 +3282,6 @@ const MobileFolderDirectoryScreen = ({
 
     const overlayFileKey = createFileSelectionKey(overlayFile);
     const overlayVideoLoading = nativePreviewVideoRequestKey === overlayFileKey;
-    const externalPlayerEnabled =
-      externalVideoPlayer === "infuse" && Platform.OS === "ios";
 
     return (
       <View pointerEvents="box-none" style={styles.previewPosterActionStack}>
@@ -3279,16 +3300,6 @@ const MobileFolderDirectoryScreen = ({
             <Ionicons color="#fff" name="play" size={30} />
           )}
         </Pressable>
-        {externalPlayerEnabled ? (
-          <Pressable
-            accessibilityLabel="用 Infuse 打开"
-            onPress={() => void handleOpenExternalVideoPlayer(overlayFile)}
-            style={styles.previewPosterExternalButton}
-          >
-            <Ionicons color={MOBILE_SAGE_SLATE.title} name="open-outline" size={15} />
-            <Text style={styles.previewPosterExternalButtonText}>Infuse</Text>
-          </Pressable>
-        ) : null}
       </View>
     );
   };

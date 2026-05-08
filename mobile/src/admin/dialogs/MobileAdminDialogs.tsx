@@ -1128,7 +1128,12 @@ const DeletedFilesDateRail = ({
 }) => {
   return (
     <View style={styles.deletedFilesDateRail}>
-      <ScrollView contentContainerStyle={styles.deletedFilesDateRailContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.deletedFilesDateRailContent}
+        showsHorizontalScrollIndicator={false}
+        showsVerticalScrollIndicator={false}
+        style={styles.deletedFilesDateRailScroller}
+      >
         {groups.map((group) => {
           const expanded = expandedYears.has(group.year);
 
