@@ -2,6 +2,7 @@ export * from './api-client';
 export * from './admin-tabs';
 export * from './admin-service';
 export * from './auth-service';
+export * from './concurrency-limiter';
 export * from './file-operations-service';
 export * from './folder-sort';
 export * from './folders-service';

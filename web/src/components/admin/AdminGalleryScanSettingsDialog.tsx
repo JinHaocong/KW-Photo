@@ -148,13 +148,15 @@ export const AdminGalleryScanSettingsDialog = ({
 
   return (
     <Modal
+      asForm
+      onSubmit={() => void handleSave()}
       className="gallery-editor-dialog gallery-scan-settings-dialog"
       footer={
         <div className="dialog-actions">
           <button className="secondary-btn" disabled={submitting} onClick={onClose} type="button">
             取消
           </button>
-          <button className="primary-btn" disabled={disabled} onClick={() => void handleSave()} type="button">
+          <button className="primary-btn" disabled={disabled} type="submit">
             <Save size={15} />
             {submitting ? '保存中...' : '保存'}
           </button>
@@ -162,18 +164,9 @@ export const AdminGalleryScanSettingsDialog = ({
       }
       onClose={onClose}
       open={true}
-      title={
-        <div className="gallery-editor-dialog__header">
-          <div>
-            <h3>图库扫描与设置</h3>
-            <p>对齐 MT Photos 的全局扫描规则，保存后会影响后续图库扫描和缩略图生成任务。</p>
-          </div>
-          <button aria-label="关闭图库扫描设置" className="icon-btn" onClick={onClose} type="button">
-            <X size={18} />
-          </button>
-        </div>
-      }
+      title="图库扫描与设置"
     >
+      <p>对齐 MT Photos 的全局扫描规则，保存后会影响后续图库扫描和缩略图生成任务。</p>
 
         <div className="gallery-scan-settings-summary">
           <span>

@@ -3498,6 +3498,7 @@ kbd {
 .dialog {
   display: flex;
   flex-direction: column;
+  min-height: min(320px, calc(100dvh - 64px));
   max-height: calc(100vh - 64px);
   width: min(440px, calc(100vw - 32px));
   border-radius: 18px;
@@ -4120,6 +4121,78 @@ kbd {
   border-color: color-mix(in srgb, var(--theme) 24%, var(--slate-200));
 }
 
+.admin-page-tabs {
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 8px;
+  overflow: visible;
+  padding: 1px 0 0;
+}
+
+.admin-page-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.admin-page-tabs button {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 154px;
+  gap: 9px;
+  min-width: 146px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  text-align: left;
+}
+
+.admin-page-tabs button.is-active {
+  background: color-mix(in srgb, var(--theme-selection) 58%, #fff);
+  border-color: color-mix(in srgb, var(--theme) 28%, var(--slate-200));
+}
+
+.admin-page-tabs__icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--slate-500);
+}
+
+.admin-page-tabs button.is-active .admin-page-tabs__icon {
+  color: var(--theme);
+}
+
+.admin-page-tabs__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.admin-page-tabs__label,
+.admin-page-tabs__description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-page-tabs__label {
+  color: var(--slate-500);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.admin-page-tabs__description {
+  color: var(--slate-400);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.admin-page-tabs button.is-active .admin-page-tabs__label,
+.admin-page-tabs button.is-active .admin-page-tabs__description {
+  color: var(--theme);
+}
+
 .admin-mini-list,
 .admin-info-list {
   display: grid;
@@ -4142,6 +4215,447 @@ kbd {
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.admin-task-panel,
+.system-config-panel {
+  gap: 14px;
+}
+
+.admin-active-task-list {
+  display: grid;
+  gap: 0;
+}
+
+.admin-active-task-section {
+  gap: 16px;
+  padding: 18px 20px 20px;
+  box-shadow: none;
+}
+
+.admin-active-task-heading {
+  padding-left: 28px;
+}
+
+.admin-active-task-heading strong {
+  color: var(--slate-800);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.admin-active-task-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.58fr) minmax(0, 1.42fr);
+  align-items: start;
+  gap: 34px;
+  padding: 14px 16px 10px 68px;
+  background: transparent;
+  border-bottom: 1px solid var(--slate-200);
+}
+
+.admin-active-task-card__main,
+.admin-active-task-card__progress {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.admin-active-task-card__title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.admin-active-task-card__main strong {
+  overflow: hidden;
+  color: var(--slate-800);
+  font-size: 18px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-active-task-card__main span,
+.admin-task-progress-meta span,
+.admin-task-scheduler__main span,
+.system-config-card__copy span,
+.system-config-card__copy em,
+.system-config-note,
+.system-log-row em {
+  color: var(--slate-500);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-active-task-card__main span {
+  color: var(--slate-700);
+  font-size: 15px;
+}
+
+.admin-active-task-card__main b {
+  color: var(--slate-800);
+  font-weight: 900;
+}
+
+.admin-task-progress-track {
+  overflow: hidden;
+  height: 6px;
+  background: color-mix(in srgb, var(--theme-light) 36%, #fff);
+  border-radius: 0;
+}
+
+.admin-task-progress-fill {
+  height: 100%;
+  background: var(--theme);
+  border-radius: inherit;
+  transition: width 0.18s ease;
+}
+
+.admin-task-progress-meta {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  min-height: 48px;
+  text-align: right;
+}
+
+.admin-task-progress-meta span {
+  color: var(--slate-500);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.admin-task-scheduler,
+.admin-maintenance-tool {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-task-scheduler__icon,
+.system-config-card__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: var(--theme);
+  background: color-mix(in srgb, var(--theme-selection) 40%, #fff);
+  border: 1px solid color-mix(in srgb, var(--theme) 20%, var(--slate-200));
+  border-radius: 12px;
+}
+
+.admin-task-scheduler__main {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.admin-task-scheduler__main input {
+  width: 100%;
+  accent-color: var(--theme);
+}
+
+.admin-task-scheduler__value {
+  min-width: 42px;
+  color: var(--slate-800);
+  font-size: 22px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.admin-maintenance-tool {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.admin-maintenance-tool > svg {
+  margin-top: 10px;
+  color: var(--theme);
+}
+
+.system-license-form select,
+.system-license-form input,
+.system-config-field textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 11px;
+  color: var(--slate-700);
+  background: var(--neutral-251);
+  border: 1px solid rgb(229, 229, 229);
+  border-radius: 12px;
+  outline: 0;
+}
+
+.admin-maintenance-dropdown {
+  position: relative;
+  min-width: 0;
+}
+
+.admin-maintenance-dropdown__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 11px;
+  color: var(--slate-700);
+  background: var(--neutral-251);
+  border: 1px solid rgb(229, 229, 229);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.admin-maintenance-dropdown__trigger span,
+.admin-maintenance-dropdown__menu button span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.admin-maintenance-dropdown__trigger strong,
+.admin-maintenance-dropdown__menu strong {
+  overflow: hidden;
+  color: var(--slate-800);
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-maintenance-dropdown__trigger em,
+.admin-maintenance-dropdown__menu em,
+.admin-maintenance-dropdown__menu small {
+  overflow: hidden;
+  color: var(--slate-400);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-maintenance-dropdown__trigger svg {
+  flex: 0 0 auto;
+  color: var(--slate-400);
+}
+
+.admin-maintenance-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  z-index: 20;
+  display: grid;
+  max-height: min(420px, 56vh);
+  gap: 8px;
+  overflow: auto;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--slate-200);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.14);
+}
+
+.admin-maintenance-dropdown__menu button {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  text-align: left;
+}
+
+.admin-maintenance-dropdown__menu button:hover,
+.admin-maintenance-dropdown__menu button.is-active {
+  background: var(--slate-50);
+  border-color: var(--slate-200);
+}
+
+.admin-maintenance-dropdown__group {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-maintenance-dropdown__group > div {
+  padding: 4px 4px 2px;
+  color: var(--slate-400);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.system-config-hero {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.system-config-hero > div {
+  display: grid;
+  gap: 5px;
+}
+
+.system-config-hero strong {
+  color: var(--slate-800);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.system-config-hero span {
+  color: var(--slate-500);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.system-language-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.system-language-row button {
+  min-height: 34px;
+  padding: 0 13px;
+  color: var(--slate-500);
+  background: #fff;
+  border: 1px solid var(--slate-200);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.system-language-row button.is-active {
+  color: var(--theme);
+  background: color-mix(in srgb, var(--theme-selection) 36%, #fff);
+  border-color: color-mix(in srgb, var(--theme) 24%, var(--slate-200));
+}
+
+.system-config-card-grid,
+.system-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.system-config-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  border-radius: 14px;
+}
+
+.system-config-card__copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.system-config-card__copy strong {
+  overflow: hidden;
+  color: var(--slate-800);
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-card__copy em {
+  overflow: hidden;
+  color: var(--slate-400);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-card__actions {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-status-pill.is-success {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.system-action-grid .secondary-btn {
+  justify-content: center;
+  width: 100%;
+}
+
+.system-license-form {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.system-config-note {
+  overflow-wrap: anywhere;
+  padding: 10px;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  border-radius: 12px;
+}
+
+.system-log-list {
+  display: grid;
+  gap: 7px;
+}
+
+.system-log-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  border-radius: 12px;
+}
+
+.system-log-row strong {
+  color: var(--slate-700);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.system-log-row span {
+  overflow: hidden;
+  color: var(--slate-600);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-config-dialog {
+  width: min(680px, calc(100vw - 36px));
+}
+
+.system-config-field {
+  display: grid;
+  gap: 8px;
+}
+
+.system-config-field span {
+  color: var(--slate-500);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.system-config-field textarea {
+  min-height: 180px;
+  padding: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.55;
+  resize: vertical;
 }
 
 .admin-info-item {
@@ -4280,6 +4794,312 @@ kbd {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.admin-deleted-files-dialog {
+  min-height: min(520px, calc(100dvh - 64px));
+  width: min(920px, calc(100vw - 32px));
+}
+
+.admin-deleted-files-dialog .dialog-content {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-deleted-files-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-deleted-files-title__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: #b91c1c;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 14px;
+}
+
+.admin-deleted-files-title h2,
+.admin-deleted-files-title p {
+  margin: 0;
+}
+
+.admin-deleted-files-title h2 {
+  color: var(--slate-800);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.admin-deleted-files-title p {
+  margin-top: 5px;
+  color: var(--slate-500);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.admin-deleted-files-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: linear-gradient(135deg, #fff, #fff7f7);
+  border: 1px solid #fee2e2;
+  border-radius: 16px;
+}
+
+.admin-deleted-files-overview__copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.admin-deleted-files-overview__copy strong {
+  color: var(--slate-800);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.admin-deleted-files-overview__copy span {
+  color: var(--slate-500);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.admin-deleted-files-overview__count {
+  display: grid;
+  min-width: 112px;
+  place-items: center;
+  gap: 2px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #fee2e2;
+  border-radius: 14px;
+}
+
+.admin-deleted-files-overview__count strong {
+  color: #b91c1c;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.admin-deleted-files-overview__count span {
+  color: var(--slate-400);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.admin-deleted-files-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-deleted-files-actions .secondary-btn {
+  width: 100%;
+  min-width: 0;
+}
+
+.admin-deleted-files-actions .secondary-btn.is-active {
+  color: var(--theme);
+  background: color-mix(in srgb, var(--theme-selection) 36%, #fff);
+  border-color: color-mix(in srgb, var(--theme) 24%, var(--slate-200));
+}
+
+.admin-deleted-files-help-inline {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  color: var(--slate-500);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.7;
+  background: color-mix(in srgb, var(--theme) 8%, #fff);
+  border: 1px solid color-mix(in srgb, var(--theme) 18%, #fff);
+  border-radius: 14px;
+}
+
+.admin-deleted-files-help-inline p {
+  margin: 0;
+}
+
+.admin-deleted-file-list-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 6px;
+  min-height: 0;
+}
+
+.admin-deleted-file-virtual-list {
+  height: min(430px, calc(100dvh - 382px));
+  min-height: 220px;
+  overflow-y: auto;
+  padding: 8px 8px 8px 10px;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  border-radius: 16px;
+}
+
+.admin-deleted-file-date-rail {
+  max-height: min(430px, calc(100dvh - 382px));
+  overflow-y: auto;
+  padding: 8px 6px;
+  background: #fff;
+  border: 1px solid var(--slate-200);
+  border-radius: 14px;
+  scrollbar-width: none;
+}
+
+.admin-deleted-file-date-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.admin-deleted-file-date-rail button {
+  align-items: center;
+  width: 100%;
+  color: var(--slate-400);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.admin-deleted-file-date-rail button:hover,
+.admin-deleted-file-date-rail__year-toggle.is-expanded {
+  color: var(--theme);
+  background: color-mix(in srgb, var(--theme-selection) 30%, #fff);
+}
+
+.admin-deleted-file-date-rail__group {
+  display: grid;
+  gap: 2px;
+}
+
+.admin-deleted-file-date-rail__group + .admin-deleted-file-date-rail__group {
+  margin-top: 4px;
+}
+
+.admin-deleted-file-date-rail__year-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--slate-200) 72%, transparent);
+}
+
+.admin-deleted-file-date-rail__date {
+  display: grid;
+  grid-template-columns: 8px 40px;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 3px;
+}
+
+.admin-deleted-file-date-rail__year,
+.admin-deleted-file-date-rail__label {
+  font-size: 9px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.admin-deleted-file-date-rail__year {
+  color: var(--slate-500);
+  font-size: 12px;
+  line-height: 1;
+  text-align: left;
+}
+
+.admin-deleted-file-date-rail__year-action {
+  color: var(--slate-400);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+}
+
+.admin-deleted-file-date-rail__dot {
+  grid-column: 1;
+  width: 6px;
+  height: 6px;
+  background: #d8d8d8;
+  border-radius: 999px;
+}
+
+.admin-deleted-file-date-rail__label {
+  grid-column: 2;
+  color: var(--slate-400);
+}
+
+.admin-deleted-file-virtual-spacer {
+  position: relative;
+  min-height: 100%;
+}
+
+.admin-deleted-file-virtual-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.admin-deleted-file-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: calc(100% - 8px);
+  padding: 0 6px;
+  color: var(--slate-500);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.admin-deleted-file-group-header::before {
+  width: 4px;
+  height: 24px;
+  background: #fecaca;
+  border-radius: 999px;
+  content: "";
+}
+
+.admin-deleted-file-group-header strong {
+  flex: 1;
+  color: var(--slate-700);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.admin-deleted-file-group-header span {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  color: var(--slate-500);
+  background: #fff;
+  border: 1px solid var(--slate-200);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.admin-deleted-file-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: calc(100% - 8px);
+  overflow: hidden;
+  background: #fff;
+}
+
+.admin-deleted-file-row .admin-table-row__meta span:last-child {
+  max-width: 260px;
 }
 
 .admin-gallery-grid {
@@ -4552,6 +5372,7 @@ kbd {
 
 .gallery-confirm-dialog {
   width: min(420px, calc(100vw - 36px));
+  min-height: 0;
 }
 
 .gallery-confirm-dialog .dialog-content {
@@ -5174,6 +5995,7 @@ kbd {
 
 .admin-delete-log-dialog {
   width: min(760px, calc(100vw - 36px));
+  min-height: min(420px, calc(100dvh - 64px));
 }
 
 .admin-delete-log-table {
@@ -6522,6 +7344,45 @@ body.is-file-preview-open .mobile-tabbar {
     grid-template-columns: 1fr;
   }
 
+  .admin-active-task-card,
+  .admin-task-scheduler,
+  .admin-maintenance-tool,
+  .system-config-hero,
+  .system-license-form,
+  .system-log-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-active-task-section {
+    padding: 16px 14px;
+  }
+
+  .admin-active-task-heading,
+  .admin-active-task-card {
+    padding-left: 0;
+  }
+
+  .admin-active-task-card {
+    gap: 14px;
+    padding-right: 0;
+  }
+
+  .admin-task-progress-meta {
+    justify-items: start;
+    min-height: 0;
+    text-align: left;
+  }
+
+  .system-config-card-grid,
+  .system-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-maintenance-dropdown__menu {
+    position: static;
+    margin-top: 6px;
+  }
+
   .admin-section__title {
     align-items: flex-start;
     flex-direction: column;
@@ -6824,6 +7685,31 @@ body.is-file-preview-open .mobile-tabbar {
     font-size: 11px;
   }
 
+  .admin-page-tabs {
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 1px 0 8px;
+    scrollbar-width: none;
+  }
+
+  .admin-page-tabs button {
+    flex: 0 0 auto;
+    min-width: 148px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 16px;
+  }
+
+  .admin-page-tabs__label {
+    font-size: 12px;
+  }
+
+  .admin-page-tabs__description {
+    display: block;
+    font-size: 10px;
+  }
+
   .admin-table {
     gap: 6px;
   }
@@ -6869,6 +7755,80 @@ body.is-file-preview-open .mobile-tabbar {
     min-height: 32px;
     padding: 0 7px;
     font-size: 10px;
+  }
+
+  .admin-deleted-files-title {
+    align-items: flex-start;
+  }
+
+  .admin-deleted-files-title h2 {
+    font-size: 18px;
+  }
+
+  .admin-deleted-files-overview {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .admin-deleted-files-overview__count {
+    grid-template-columns: auto auto;
+    justify-content: space-between;
+    min-width: 0;
+  }
+
+  .admin-deleted-files-overview__count strong {
+    font-size: 20px;
+  }
+
+  .admin-deleted-files-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-deleted-file-list-shell {
+    grid-template-columns: minmax(0, 1fr) 64px;
+    gap: 6px;
+  }
+
+  .admin-deleted-file-virtual-list {
+    height: min(380px, calc(100dvh - 320px));
+    padding: 7px;
+  }
+
+  .admin-deleted-file-date-rail {
+    max-height: min(380px, calc(100dvh - 320px));
+    padding: 6px 5px;
+  }
+
+  .admin-deleted-file-date-rail button {
+    min-height: 22px;
+    padding: 0 2px;
+  }
+
+  .admin-deleted-file-date-rail__year-toggle {
+    grid-template-columns: minmax(0, 1fr) 10px;
+    min-height: 26px;
+    padding: 0 5px;
+  }
+
+  .admin-deleted-file-date-rail__date {
+    grid-template-columns: 7px 38px;
+  }
+
+  .admin-deleted-file-date-rail__label {
+    font-size: 9px;
+  }
+
+  .admin-deleted-file-date-rail__year {
+    font-size: 12px;
+  }
+
+  .admin-deleted-file-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-deleted-file-row .admin-table-row__meta span:last-child {
+    max-width: 100%;
   }
 
   .admin-gallery-tip {

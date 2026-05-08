@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
-import { ActivityIndicator, Animated, Easing, ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { NativeScrollEvent, NativeSyntheticEvent, ScrollViewProps, StyleProp, ViewStyle } from 'react-native';
+import { type ComponentProps } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import {
   MOBILE_SAGE_NEUTRALS,
@@ -12,10 +12,6 @@ import {
 } from './mobile-theme';
 
 type MobileLoadingIconName = ComponentProps<typeof Ionicons>['name'];
-
-const MIN_PULL_REFRESH_VISIBLE_MS = 420;
-const PULL_REFRESH_REVEAL_DISTANCE = 18;
-const PULL_REFRESH_TRIGGER_DISTANCE = 72;
 
 interface MobileLoadingStateProps {
   compact?: boolean;
@@ -29,21 +25,6 @@ interface MobileLoadingStateProps {
 interface MobileRefreshPillProps {
   label?: string;
   style?: StyleProp<ViewStyle>;
-}
-
-interface MobilePullRefreshIndicatorProps {
-  active?: boolean;
-  description?: string;
-  icon?: MobileLoadingIconName;
-  label?: string;
-  style?: StyleProp<ViewStyle>;
-  theme?: MobileThemeToken;
-}
-
-interface MobilePullRefreshScrollViewProps extends Omit<ScrollViewProps, 'refreshControl'> {
-  onRefresh: () => void | Promise<void>;
-  refreshing?: boolean;
-  theme?: MobileThemeToken;
 }
 
 /**
@@ -95,175 +76,6 @@ export const MobileRefreshPill = ({ label = '正在刷新', style }: MobileRefre
       <ActivityIndicator color={theme.hex} size="small" />
       <Text style={[styles.refreshPillText, { color: theme.hex }]}>{label}</Text>
     </View>
-  );
-};
-
-/**
- * Replaces native RefreshControl with a themeable pull-to-refresh ScrollView.
- */
-export const MobilePullRefreshScrollView = ({
-  children,
-  onRefresh,
-  onScroll,
-  onScrollEndDrag,
-  refreshing = false,
-  scrollEventThrottle,
-  theme,
-  ...scrollViewProps
-}: MobilePullRefreshScrollViewProps) => {
-  const pullDistanceRef = useRef(0);
-  const refreshLockedRef = useRef(false);
-  const [pulling, setPulling] = useState(false);
-
-  useEffect(() => {
-    if (!refreshing) {
-      refreshLockedRef.current = false;
-    }
-  }, [refreshing]);
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
-      const pullDistance = Math.max(0, -event.nativeEvent.contentOffset.y);
-
-      pullDistanceRef.current = pullDistance;
-
-      setPulling((current) => {
-        const next = pullDistance > PULL_REFRESH_REVEAL_DISTANCE && !refreshing;
-
-        return current === next ? current : next;
-      });
-      onScroll?.(event);
-    },
-    [onScroll, refreshing],
-  );
-
-  const handleScrollEndDrag = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
-      const pullDistance = Math.max(pullDistanceRef.current, Math.max(0, -event.nativeEvent.contentOffset.y));
-
-      setPulling(false);
-
-      if (pullDistance >= PULL_REFRESH_TRIGGER_DISTANCE && !refreshing && !refreshLockedRef.current) {
-        refreshLockedRef.current = true;
-        void onRefresh();
-      }
-
-      onScrollEndDrag?.(event);
-    },
-    [onRefresh, onScrollEndDrag, refreshing],
-  );
-
-  return (
-    <ScrollView
-      {...scrollViewProps}
-      onScroll={handleScroll}
-      onScrollEndDrag={handleScrollEndDrag}
-      scrollEventThrottle={scrollEventThrottle ?? 16}
-    >
-      <MobilePullRefreshIndicator active={pulling || refreshing} theme={theme} />
-      {children}
-    </ScrollView>
-  );
-};
-
-/**
- * Renders a themed in-content refresh indicator while native pull-to-refresh is active.
- */
-export const MobilePullRefreshIndicator = ({
-  active = true,
-  style,
-  theme,
-}: MobilePullRefreshIndicatorProps) => {
-  const contextTheme = useMobileTheme();
-  const activeTheme = theme ?? contextTheme;
-  const layoutValue = useRef(new Animated.Value(active ? 1 : 0)).current;
-  const presenceValue = useRef(new Animated.Value(active ? 1 : 0)).current;
-  const activeAnimationRef = useRef<Animated.CompositeAnimation | undefined>(undefined);
-  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const shownAtRef = useRef(active ? Date.now() : 0);
-
-  useEffect(() => {
-    const runPresenceAnimation = (toValue: number): Animated.CompositeAnimation => {
-      return Animated.parallel([
-        Animated.timing(layoutValue, {
-          duration: toValue === 1 ? 220 : 190,
-          easing: toValue === 1 ? Easing.out(Easing.cubic) : Easing.inOut(Easing.cubic),
-          toValue,
-          useNativeDriver: false,
-        }),
-        toValue === 1
-          ? Animated.spring(presenceValue, {
-              damping: 19,
-              mass: 0.78,
-              stiffness: 165,
-              toValue,
-              useNativeDriver: true,
-            })
-          : Animated.timing(presenceValue, {
-              duration: 180,
-              easing: Easing.inOut(Easing.cubic),
-              toValue,
-              useNativeDriver: true,
-            }),
-      ]);
-    };
-
-    if (exitTimerRef.current) {
-      clearTimeout(exitTimerRef.current);
-      exitTimerRef.current = undefined;
-    }
-    activeAnimationRef.current?.stop();
-
-    if (active) {
-      shownAtRef.current = Date.now();
-      activeAnimationRef.current = runPresenceAnimation(1);
-      activeAnimationRef.current.start();
-    } else {
-      const elapsed = shownAtRef.current ? Date.now() - shownAtRef.current : MIN_PULL_REFRESH_VISIBLE_MS;
-      const exitDelay = Math.max(0, MIN_PULL_REFRESH_VISIBLE_MS - elapsed);
-
-      exitTimerRef.current = setTimeout(() => {
-        activeAnimationRef.current = runPresenceAnimation(0);
-        activeAnimationRef.current.start();
-      }, exitDelay);
-    }
-
-    return () => {
-      if (exitTimerRef.current) {
-        clearTimeout(exitTimerRef.current);
-        exitTimerRef.current = undefined;
-      }
-      activeAnimationRef.current?.stop();
-    };
-  }, [active, layoutValue, presenceValue]);
-
-  const slotHeight = layoutValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 38],
-  });
-  const entranceTranslateY = presenceValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-8, 0],
-  });
-  const entranceScale = presenceValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.96, 1],
-  });
-
-  return (
-    <Animated.View style={[styles.pullRefreshSlot, { height: slotHeight }, style]}>
-      <Animated.View
-        style={[
-          styles.pullRefreshFrame,
-          {
-            opacity: presenceValue,
-            transform: [{ translateY: entranceTranslateY }, { scale: entranceScale }],
-          },
-        ]}
-      >
-        <ActivityIndicator key={`pull-refresh-${activeTheme.hex}`} color={activeTheme.hex} size="large" />
-      </Animated.View>
-    </Animated.View>
   );
 };
 
@@ -345,71 +157,6 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     position: 'relative',
     width: 58,
-  },
-  pullRefreshCard: {
-    ...MOBILE_SAGE_SHADOWS.panel,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 10,
-    maxWidth: 340,
-    minHeight: 46,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    width: '100%',
-  },
-  pullRefreshCopy: {
-    flex: 1,
-    gap: 1,
-    minWidth: 0,
-  },
-  pullRefreshDescription: {
-    color: MOBILE_SAGE_SLATE.subtle,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  pullRefreshFrame: {
-    alignItems: 'center',
-    minHeight: 34,
-    justifyContent: 'center',
-    paddingBottom: 4,
-    paddingHorizontal: 6,
-    paddingTop: 4,
-  },
-  pullRefreshIcon: {
-    alignItems: 'center',
-    borderRadius: 999,
-    height: 30,
-    justifyContent: 'center',
-    width: 30,
-  },
-  pullRefreshPulse: {
-    borderRadius: 999,
-    bottom: -4,
-    left: -4,
-    position: 'absolute',
-    right: -4,
-    top: -4,
-  },
-  pullRefreshSpinner: {
-    alignItems: 'center',
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 32,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-    width: 32,
-  },
-  pullRefreshSlot: {
-    overflow: 'hidden',
-    width: '100%',
-  },
-  pullRefreshTitle: {
-    fontSize: 12,
-    fontWeight: '900',
   },
   refreshPill: {
     ...MOBILE_SAGE_SHADOWS.panel,

@@ -641,7 +641,7 @@ const FileThumbnailMedia = ({
     authCode,
     baseUrl: serverUrl,
     md5: file.md5,
-    type: isVideo ? 'poster' : 'h220',
+    type: 'h220',
   });
   const thumbnailCache = useCachedMediaUrl({
     enabled: cacheEnabled && visible,
@@ -650,7 +650,7 @@ const FileThumbnailMedia = ({
     kind: 'file-thumbnail',
     md5: file.md5,
     sourceUrl: visible ? thumbnailUrl : undefined,
-    variant: isVideo ? 'poster' : 'h220',
+    variant: 'h220',
   });
 
   return thumbnailCache.displayUrl ? (
@@ -782,6 +782,7 @@ const CachedImageContent = ({
     folder: cacheFolder,
     kind: 'folder-cover',
     md5,
+    showSourceOnMiss: true,
     sourceUrl: visible ? sourceUrl : undefined,
     variant: 'h220',
   });

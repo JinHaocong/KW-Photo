@@ -32,6 +32,7 @@ export const useAdminGalleryTaskPolling = ({
   userId,
 }: UseAdminGalleryTaskPollingParams): UseAdminGalleryTaskPollingResult => {
   const emptyPollCountRef = useRef(0);
+  const pollingInFlightRef = useRef(false);
   const [polling, setPolling] = useState(false);
   const {
     data: activeTasks = [],
@@ -40,18 +41,59 @@ export const useAdminGalleryTaskPolling = ({
     isError,
     refetch,
   } = useQuery({
-    enabled: polling && activeTab === 'gallery' && enabled,
+    enabled: false,
     queryFn: () => fetchAdminTasks(apiOptions, 'active'),
     queryKey: ['mobile-admin-gallery-active-tasks', apiOptions.baseUrl, userId],
-    refetchInterval: polling ? ACTIVE_TASK_REFETCH_INTERVAL : false,
     retry: false,
   });
 
   const startPolling = useCallback((): void => {
     emptyPollCountRef.current = 0;
     setPolling(true);
-    void refetch();
-  }, [refetch]);
+  }, []);
+
+  useEffect(() => {
+    if (!polling || activeTab !== 'gallery' || !enabled) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * Waits for each request to finish before scheduling the next mobile gallery-task poll.
+     */
+    const pollActiveTasks = async (): Promise<void> => {
+      if (pollingInFlightRef.current) {
+        if (!cancelled) {
+          timer = setTimeout(() => void pollActiveTasks(), ACTIVE_TASK_REFETCH_INTERVAL);
+        }
+        return;
+      }
+
+      pollingInFlightRef.current = true;
+
+      try {
+        await refetch();
+      } finally {
+        pollingInFlightRef.current = false;
+
+        if (!cancelled) {
+          timer = setTimeout(() => void pollActiveTasks(), ACTIVE_TASK_REFETCH_INTERVAL);
+        }
+      }
+    };
+
+    void pollActiveTasks();
+
+    return () => {
+      cancelled = true;
+
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [activeTab, enabled, polling, refetch]);
 
   useEffect(() => {
     if (enabled && activeTab === 'gallery') {

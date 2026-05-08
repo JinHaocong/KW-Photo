@@ -13,6 +13,7 @@ const EMPTY_CACHE_TOTALS: CacheFolderTotals = {
   originalVideoCount: 0,
   size: 0,
   thumbnailCount: 0,
+  videoPosterCount: 0,
 };
 
 export const createEmptyTaskCounts = (): AdminTaskCounts => ({
@@ -32,12 +33,14 @@ export const createEmptyCacheStats = (): MobileCacheStats => ({
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
+  videoPosterCount: 0,
 });
 
 export const getCacheFolderMetaPills = (totals: CacheFolderTotals): CacheMetaPillData[] => {
   const items: CacheMetaPillData[] = [
     { icon: 'folder-outline', label: `${totals.directoryCount} 目录`, value: totals.directoryCount },
     { icon: 'image-outline', label: `${totals.thumbnailCount} 列表图`, value: totals.thumbnailCount },
+    { icon: 'film-outline', label: `${totals.videoPosterCount} 视频海报`, value: totals.videoPosterCount },
     { icon: 'sparkles-outline', label: `${totals.hdThumbnailCount} 高清图`, value: totals.hdThumbnailCount },
     { icon: 'albums-outline', label: `${totals.coverCount} 封面`, value: totals.coverCount },
     { icon: 'expand-outline', label: `${totals.originalImageCount} 原图`, value: totals.originalImageCount },
@@ -55,6 +58,7 @@ export const getCacheCompositionPills = (stats: MobileCacheStats): CacheMetaPill
   const items: CacheMetaPillData[] = [
     { icon: 'folder-outline', label: `${stats.directoryCount} 目录`, value: stats.directoryCount },
     { icon: 'image-outline', label: `${stats.thumbnailCount} 列表图`, value: stats.thumbnailCount },
+    { icon: 'film-outline', label: `${stats.videoPosterCount} 视频海报`, value: stats.videoPosterCount },
     { icon: 'sparkles-outline', label: `${stats.hdThumbnailCount} 高清图`, value: stats.hdThumbnailCount },
     { icon: 'albums-outline', label: `${stats.coverCount} 封面`, value: stats.coverCount },
     { icon: 'expand-outline', label: `${stats.originalImageCount} 原图`, value: stats.originalImageCount },
@@ -161,6 +165,7 @@ const createTotalsFromFolder = (folder: MobileCacheFolderSummary): CacheFolderTo
   originalVideoCount: folder.originalVideoCount,
   size: folder.size,
   thumbnailCount: folder.thumbnailCount,
+  videoPosterCount: folder.videoPosterCount,
 });
 
 const addCacheTotals = (target: CacheFolderTotals, source: CacheFolderTotals): CacheFolderTotals => {
@@ -173,6 +178,7 @@ const addCacheTotals = (target: CacheFolderTotals, source: CacheFolderTotals): C
   target.originalVideoCount += source.originalVideoCount;
   target.size += source.size;
   target.thumbnailCount += source.thumbnailCount;
+  target.videoPosterCount += source.videoPosterCount;
 
   return target;
 };

@@ -30,7 +30,7 @@ export const getAdminTabMeta = (tab: AdminTab, summary: AdminTabMetaSummary): st
   }
 
   if (tab === 'system') {
-    return '服务与授权';
+    return '系统配置';
   }
 
   return `${summary.galleryCount} 图库 / ${summary.taskCounts.active} 任务`;

@@ -101,6 +101,26 @@ export interface AdminFileDeleteLogRecord {
   operator: string;
 }
 
+export interface AdminDeletedFileRecord {
+  fileName: string;
+  filePath: string;
+  id: number;
+  md5: string;
+}
+
+export interface AdminDeletedFileGroup {
+  addr?: string;
+  day: string;
+  list: AdminDeletedFileRecord[];
+}
+
+export interface AdminDeletedFilesResult {
+  duplicateFiles: UnknownRecord;
+  groups: AdminDeletedFileGroup[];
+  totalCount: number;
+  ver?: number;
+}
+
 export interface AdminSkippedFolderLog {
   folderPath: string;
   msg: string;
@@ -109,6 +129,60 @@ export interface AdminSkippedFolderLog {
 export interface AdminInfoItem {
   label: string;
   value: string;
+}
+
+export interface AdminActiveTaskOverview {
+  stage?: AdminTaskStage;
+  tasks: AdminTask[];
+  thumbTaskMaxNum?: number;
+}
+
+export interface AdminDatabaseReindexInfo {
+  current: number;
+  status?: string;
+  total: number;
+}
+
+export interface AdminLogRecord {
+  level: string;
+  message: string;
+  timestamp?: string;
+}
+
+export interface AdminMaintenanceTaskDefinition {
+  destructive?: boolean;
+  label: string;
+  value: string;
+}
+
+export interface AdminSystemConfigInfo {
+  cacheVer?: number;
+  categoryOneId?: number;
+  cpuThreadNum: number;
+  dbTZ?: string;
+  faceRegVer?: string;
+  items: AdminInfoItem[];
+  taskMaxThreadNum: number;
+}
+
+export interface AdminSystemConfigRecord {
+  description?: string;
+  key: string;
+  type?: string;
+  updatedAt?: string;
+  value: string;
+}
+
+export interface AdminTestApiPayload {
+  api_key: string;
+  type: 'facial' | 'ocr';
+  uri: string;
+}
+
+export interface AdminTestApiResult {
+  err?: string;
+  pass: boolean;
+  response?: unknown;
 }
 
 export interface AdminTaskStage {
@@ -127,6 +201,8 @@ export interface AdminTask {
   name: string;
   progressLabel: string;
   progressPercent?: number;
+  progressTotal?: number;
+  progressValue?: number;
   stage?: AdminTaskStage;
   startFrom?: string;
   statusLabel: string;
@@ -186,6 +262,115 @@ const LEGACY_GALLERY_SCAN_SETTING_KEYS = {
   excludeFileNamePrefixes: 'EXCLUDE_FILE_NAMES',
 } as const;
 
+export const ADMIN_SYSTEM_CONFIG_KEYS = {
+  classifyApi: 'CLASSIFY_API_CONFIG',
+  faceApi: 'FACE_API_CONFIG',
+  faceApiVersion: 'FACE_API_VERSION',
+  faceRegApi: 'FACE_REG_API_CONFIG',
+  gpsApi: 'GPS_API_CONFIG',
+  hdThumb: 'HD_THUMB_CONFIG',
+  hdThumbFolderPath: 'HD_THUMB_FOLDER_PATH_CONFIG',
+  ocrApi: 'OCR_API_CONFIG',
+  pgAutoBackup: 'PG_AUTO_BACKUP_CONFIG',
+  showMemory: 'SHOW_MEMORY_CONFIG',
+  similarFiles: 'SIMILAR_FILES_CONFIG',
+  systemLanguage: 'SYSTEM_LANGUAGE',
+  taskMaxThread: 'TASK_MAX_THREAD',
+  transcode: 'TRANSCODE_CONFIG',
+  transcodeFolderPath: 'TRANSCODE_FOLDER_PATH_CONFIG',
+  trashShareInUsers: 'FUNC_TRASH_SHARE_IN_USERS',
+} as const;
+
+export const ADMIN_TASK_TYPE_LABELS: Record<string, string> = {
+  adminDeleteUserSetCover_address: '清除地点相册手动封面',
+  adminDeleteUserSetCover_classify: '清除场景相册手动封面',
+  bindRawFile: '扫描RAW文件',
+  checkDescriptorPass: '检查人脸特征状态',
+  clearAlbumInvalidFileId: '清理相册无效文件',
+  clearAllJobs: '清空后台任务',
+  clearDataAfterDeleteFilesPermanently: '清理永久删除文件数据',
+  cleanGarbageData: '清理缓存文件',
+  cleanNoGalleryData: '清理已删除图库数据',
+  clipTask: 'CLIP识别',
+  detectFileCategories: '识别场景',
+  detectFileFaces: '识别人脸',
+  detectFileFacesV2: '识别人脸V2',
+  fileSimilarTask: '相似照片识别',
+  fillGpsInfo: '识别GPS信息',
+  fillGpsInfoFix: '检测识别GPS信息失败的照片',
+  fixHDRVideoThumbs: '检测并更新HDR视频缩略图',
+  fixNotSRGBPhotoThumbs: '检测并更新照片缩略图',
+  fixThumb: '修复无法显示的缩略图',
+  genPeople: '生成人物相册',
+  genPeopleBase: '生成人物特征对比数据',
+  genPeopleCover: '刷新人物封面',
+  generatePhotoThumb: '生成照片缩略图',
+  generateVideoPreview: '生成视频预览图',
+  imageHdThumb: '生成高清预览图',
+  ocrTask: '文本识别',
+  reGenPeople: '重建所有人物相册',
+  reGenPeopleBase: '重建特征对比数据及人物相册',
+  refreshExif: '刷新EXIF信息',
+  refreshThumb: '重新生成全部文件缩略图',
+  refreshTimelineCache: '刷新时间线缓存',
+  resetAllFaceDescriptor: '重建全部人脸数据',
+  resetAllGpsInfo: '重新生成地点相册',
+  resetFailedCategories: '检测未识别的场景照片',
+  resetFailedClip: '检测未识别的CLIP照片',
+  resetFailedFaceDescriptor: '检测未识别的人脸照片',
+  resetFailedImageHdThumb: '检测生成高清预览图失败的照片',
+  resetFailedOCR: '检测未识别的文本照片',
+  resetFailedSimilar: '检测未识别的相似照片',
+  resetFailedVideoTranscode: '检测生成转码文件失败的视频',
+  resetFileCategories: '清空并重新识别所有场景',
+  resetFileClip: '清空并重新识别所有CLIP',
+  resetFileOcr: '清空并重新识别所有文本',
+  resetFileSimilar: '清空并重新检测所有相似照片',
+  resetImageHdThumb: '重新生成全部照片高清预览图',
+  resetVideoTranscode: '重新生成全部视频转码文件',
+  scanFiles: '扫描文件',
+  scanFilesForUpload: '扫描上传文件',
+  scanLivePhotos: '扫描Live Photo',
+  syncAllAlbumAutoLink: '同步自动相册关联',
+  testLimit: '测试任务限制',
+  updateAllFilesGalleryIds: '更新目录列表',
+  upgradeCacheFolder: '升级缩略图目录结构',
+  videoTranscode: '视频转码',
+};
+
+export const ADMIN_MAINTENANCE_TASKS: readonly AdminMaintenanceTaskDefinition[] = [
+  { label: '【缩略图】- 修复无法显示的缩略图', value: 'fixThumb' },
+  { label: '【缩略图】- 重新生成全部文件的缩略图（仅用于缩略图文件被删除的情况）', value: 'refreshThumb', destructive: true },
+  { label: '【缩略图】- 升级目录结构（分散存多个目录，避免单目录下文件数量过多）', value: 'upgradeCacheFolder' },
+  { label: '【缩略图】- 检测并更新HDR视频缩略图（仅用于HDR视频缩略图颜色错误的情况）', value: 'fixHDRVideoThumbs' },
+  { label: '【缩略图】- 检测并更新照片缩略图（仅用于照片缩略图颜色泛白的情况）', value: 'fixNotSRGBPhotoThumbs' },
+  { label: '【EXIF】- 刷新所有文件的exif信息（在外部修改过文件元数据后可执行）', value: 'refreshExif' },
+  { label: '【地点相册】- 检测识别GPS信息失败的照片', value: 'fillGpsInfoFix' },
+  { label: '【地点相册】- 重新生成地点相册（清空现有的GPS识别数据，重新运行GPS信息识别）', value: 'resetAllGpsInfo', destructive: true },
+  { label: '【地点相册】- 清除手动设置的封面（让地点恢复自动变化封面）', value: 'adminDeleteUserSetCover_address', destructive: true },
+  { label: '【场景识别】- 检测是否有未识别的照片', value: 'resetFailedCategories' },
+  { label: '【场景识别】- 清空识别结果，然后重新识别所有照片', value: 'resetFileCategories', destructive: true },
+  { label: '【场景相册】- 清除手动设置的封面（让场景恢复自动变化封面）', value: 'adminDeleteUserSetCover_classify', destructive: true },
+  { label: '【工具】- 清理已删除图库的数据（清理已删除图库的文件数据）', value: 'cleanNoGalleryData', destructive: true },
+  { label: '【工具】- 清理缓存文件（清理在外部删除的文件的数据及缩略图）', value: 'cleanGarbageData', destructive: true },
+  { label: '【工具】- 清空后台任务', value: 'clearAllJobs', destructive: true },
+  { label: '【高清预览图】- 检测是否有生成高清预览图失败的照片', value: 'resetFailedImageHdThumb' },
+  { label: '【高清预览图】- 重新生成全部照片的高清预览图（仅用于高清预览图文件被删除的情况）', value: 'resetImageHdThumb', destructive: true },
+  { label: '【视频转码】- 检测是否有生成转码文件失败的视频', value: 'resetFailedVideoTranscode' },
+  { label: '【视频转码】- 重新生成全部视频的转码文件（仅用于转码文件被删除的情况）', value: 'resetVideoTranscode', destructive: true },
+  { label: '【文本识别】- 检测是否有未识别的照片', value: 'resetFailedOCR' },
+  { label: '【文本识别】- 清空识别结果，然后重新识别所有照片', value: 'resetFileOcr', destructive: true },
+  { label: '【CLIP识别】- 检测是否有未识别的照片', value: 'resetFailedClip' },
+  { label: '【CLIP识别】- 清空识别结果，然后重新识别所有照片', value: 'resetFileClip', destructive: true },
+  { label: '【相似照片识别】- 检测是否有未识别的文件', value: 'resetFailedSimilar' },
+  { label: '【相似照片识别】- 清空检测结果，然后重新检测所有文件', value: 'resetFileSimilar', destructive: true },
+  { label: '【人物相册】- 检测是否有未识别的照片', value: 'resetFailedFaceDescriptor' },
+  { label: '【人物相册】- 刷新人物封面（当人物封面不显示时可执行）', value: 'genPeopleCover' },
+  { label: '【人物相册】- 重建所有人物相册（重新生成人物相册）', value: 'reGenPeople', destructive: true },
+  { label: '【人物相册】- 重建特征对比数据及人物相册（重新人脸特征对比 + 重新生成人物相册）', value: 'reGenPeopleBase', destructive: true },
+  { label: '【人物相册】- 重建全部数据（重新识别人脸 + 重新人脸特征对比 + 重新生成人物相册）', value: 'resetAllFaceDescriptor', destructive: true },
+] as const;
+
 const GALLERY_TASK_TYPES = new Set([
   'bindRawFile',
   'clipTask',
@@ -204,45 +389,13 @@ const GALLERY_TASK_TYPES = new Set([
   'ocrTask',
   'refreshExif',
   'refreshThumb',
+  'resetFailedSimilar',
   'scanFiles',
   'scanFilesForUpload',
   'scanLivePhotos',
   'updateAllFilesGalleryIds',
   'videoTranscode',
 ]);
-
-const TASK_NAME_LABELS: Record<string, string> = {
-  bindRawFile: '扫描RAW文件',
-  clearAlbumInvalidFileId: '清理相册无效文件',
-  cleanGarbageData: '清理无效数据',
-  cleanNoGalleryData: '清理无图库文件',
-  clipTask: 'CLIP识别',
-  detectFileCategories: '识别场景',
-  detectFileFaces: '识别人脸',
-  detectFileFacesV2: '识别人脸',
-  fileSimilarTask: '识别相似图片',
-  fillGpsInfo: '补全GPS信息',
-  fillGpsInfoFix: '修复GPS信息',
-  fixHDRVideoThumbs: '修复HDR视频缩略图',
-  fixNotSRGBPhotoThumbs: '修复非sRGB照片缩略图',
-  fixThumb: '修复缩略图',
-  genPeople: '生成人物',
-  genPeopleBase: '生成人物基础数据',
-  genPeopleCover: '生成人物封面',
-  generatePhotoThumb: '生成照片缩略图',
-  generateVideoPreview: '生成视频预览',
-  imageHdThumb: '生成高清缩略图',
-  ocrTask: 'OCR识别',
-  refreshExif: '刷新EXIF',
-  refreshThumb: '刷新缩略图',
-  refreshTimelineCache: '刷新时间线缓存',
-  scanFiles: '扫描文件',
-  scanFilesForUpload: '扫描上传文件',
-  scanLivePhotos: '扫描Live Photo',
-  updateAllFilesGalleryIds: '更新图库索引',
-  upgradeCacheFolder: '升级缓存目录',
-  videoTranscode: '视频转码',
-};
 
 const TASK_NAME_WORD_LABELS: Record<string, string> = {
   check: '检查',
@@ -548,6 +701,19 @@ export const clearAdminFileDeleteLogs = (options: ApiClientOptions): Promise<unk
 };
 
 /**
+ * Fetches files marked abnormal because the original disk file is missing.
+ * @param options Authenticated API client options.
+ * @returns Grouped abnormal file rows and summary count.
+ */
+export const fetchAdminDeletedFiles = async (
+  options: ApiClientOptions,
+): Promise<AdminDeletedFilesResult> => {
+  const payload = await createApiClient(options).request<unknown>('/gallery/findDeletedFiles');
+
+  return normalizeDeletedFilesResult(payload);
+};
+
+/**
  * Fetches skipped-folder scan logs.
  * @param options Authenticated API client options.
  * @returns Normalized skipped-folder logs.
@@ -607,6 +773,78 @@ export const updateAdminGalleryScanSettings = (
     },
     method: 'POST',
   });
+};
+
+/**
+ * Fetches every raw system config record exposed by MT Photos.
+ * @param options Authenticated API client options.
+ * @returns Normalized config records.
+ */
+export const fetchAdminSystemConfigs = async (
+  options: ApiClientOptions,
+): Promise<AdminSystemConfigRecord[]> => {
+  const payload = await createApiClient(options).request<unknown>('/system-config');
+
+  return normalizeSystemConfigRecords(payload);
+};
+
+/**
+ * Fetches the compact system-config info payload used by the demo system page.
+ * @param options Authenticated API client options.
+ * @returns Normalized system config info.
+ */
+export const fetchAdminSystemConfigInfo = async (
+  options: ApiClientOptions,
+): Promise<AdminSystemConfigInfo> => {
+  const payload = await createApiClient(options).request<unknown>('/system-config/configInfo', {
+    method: 'POST',
+  });
+
+  return normalizeSystemConfigInfo(payload);
+};
+
+/**
+ * Persists one system config key using the generic MT Photos system-config endpoint.
+ * @param options Authenticated API client options.
+ * @param key Config key.
+ * @param value Config value stored by the server.
+ */
+export const updateAdminSystemConfig = (
+  options: ApiClientOptions,
+  key: string,
+  value: string,
+): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config', {
+    body: { key, value },
+    method: 'PATCH',
+  });
+};
+
+/**
+ * Persists multiple system config keys in one request.
+ * @param options Authenticated API client options.
+ * @param list Config entries.
+ */
+export const updateAdminSystemConfigs = (
+  options: ApiClientOptions,
+  list: Array<{ key: string; value: string }>,
+): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/patchMulti', {
+    body: { list },
+    method: 'POST',
+  });
+};
+
+/**
+ * Updates the backend task CPU thread limit.
+ * @param options Authenticated API client options.
+ * @param value Maximum number of task worker threads.
+ */
+export const updateAdminTaskMaxThread = (
+  options: ApiClientOptions,
+  value: number,
+): Promise<unknown> => {
+  return updateAdminSystemConfig(options, ADMIN_SYSTEM_CONFIG_KEYS.taskMaxThread, String(value));
 };
 
 /**
@@ -674,6 +912,19 @@ export const fetchAdminTaskCounts = async (options: ApiClientOptions): Promise<A
 };
 
 /**
+ * Fetches active backend jobs and the shared sub-task progress payload.
+ * @param options Authenticated API client options.
+ * @returns Active task overview for demo-style task progress.
+ */
+export const fetchAdminActiveTaskOverview = async (
+  options: ApiClientOptions,
+): Promise<AdminActiveTaskOverview> => {
+  const payload = await createApiClient(options).request<unknown>('/fileTask/jobs/active');
+
+  return normalizeActiveTaskOverview(payload);
+};
+
+/**
  * Fetches one task queue by status.
  * @param options Authenticated API client options.
  * @param status Task queue status.
@@ -686,6 +937,33 @@ export const fetchAdminTasks = async (
   const payload = await createApiClient(options).request<unknown>(TASK_STATUS_PATH_MAP[status]);
 
   return normalizeTaskList(payload);
+};
+
+/**
+ * Checks whether the backend task queue is paused.
+ * @param options Authenticated API client options.
+ */
+export const fetchAdminTaskQueuePaused = async (options: ApiClientOptions): Promise<boolean> => {
+  const payload = await createApiClient(options).request<unknown>('/fileTask/jobs/isPaused');
+
+  return normalizeBoolean(payload);
+};
+
+/**
+ * Creates one maintenance task through the demo system maintenance endpoint.
+ * @param options Authenticated API client options.
+ * @param type Task type.
+ * @param info Optional task info.
+ */
+export const createAdminMaintenanceTask = (
+  options: ApiClientOptions,
+  type: string,
+  info?: Record<string, unknown>,
+): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/fileTask/addTask', {
+    body: { force: true, info, type },
+    method: 'POST',
+  });
 };
 
 /**
@@ -756,6 +1034,198 @@ export const fetchAdminLicenseInfo = async (options: ApiClientOptions): Promise<
   const payload = await createApiClient(options).request<unknown>('/gateway/licenseInfo');
 
   return normalizeInfoItems(payload);
+};
+
+/**
+ * Triggers a database backup on the MT Photos server.
+ * @param options Authenticated API client options.
+ * @returns Backup file path when returned by the server.
+ */
+export const createAdminDatabaseBackup = async (options: ApiClientOptions): Promise<string | undefined> => {
+  const payload = await createApiClient(options).request<unknown>('/system-config/pgDump', {
+    method: 'POST',
+  });
+  const record = unwrapRecord(payload);
+  const distPath = readString(record, ['distPath', 'path', 'filePath']);
+
+  return distPath || undefined;
+};
+
+/**
+ * Starts a database index rebuild.
+ * @param options Authenticated API client options.
+ */
+export const rebuildAdminDatabaseIndex = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/dbReIndex', { method: 'POST' });
+};
+
+/**
+ * Fetches database index rebuild progress.
+ * @param options Authenticated API client options.
+ */
+export const fetchAdminDatabaseReindexInfo = async (
+  options: ApiClientOptions,
+): Promise<AdminDatabaseReindexInfo> => {
+  return normalizeDatabaseReindexInfo(
+    await createApiClient(options).request<unknown>('/system-config/dbReIndexInfo', {
+      method: 'POST',
+    }),
+  );
+};
+
+/**
+ * Rebuilds indexes that depend on database timezone configuration.
+ * @param options Authenticated API client options.
+ */
+export const rebuildAdminDatabaseTimezoneIndex = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/dbReIndexForTZ', { method: 'POST' });
+};
+
+/**
+ * Fetches server logs kept in memory.
+ * @param options Authenticated API client options.
+ * @returns Normalized server logs.
+ */
+export const fetchAdminSystemLogs = async (options: ApiClientOptions): Promise<AdminLogRecord[]> => {
+  const payload = await createApiClient(options).request<unknown>('/system-config/getLogs', {
+    method: 'POST',
+  });
+
+  return normalizeLogRecords(payload);
+};
+
+/**
+ * Fetches the available libheif runtime versions as compact display rows.
+ * @param options Authenticated API client options.
+ */
+export const fetchAdminLibheifVersions = async (options: ApiClientOptions): Promise<AdminInfoItem[]> => {
+  const payload = await createApiClient(options).request<unknown>('/system-config/getLibheifVersion', {
+    method: 'POST',
+  });
+
+  return normalizeInfoItems(payload);
+};
+
+/**
+ * Switches the server libheif runtime version.
+ * @param options Authenticated API client options.
+ * @param fileName Version file name returned by the server.
+ */
+export const updateAdminLibheifVersion = (
+  options: ApiClientOptions,
+  fileName: string,
+): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/libheifVersion', {
+    body: { fileName },
+    method: 'POST',
+  });
+};
+
+/**
+ * Clears server logs kept in memory.
+ * @param options Authenticated API client options.
+ */
+export const clearAdminSystemLogs = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/clearLogs', { method: 'POST' });
+};
+
+/**
+ * Tests an OCR or facial-recognition API configuration.
+ * @param options Authenticated API client options.
+ * @param payload Test payload.
+ */
+export const testAdminRecognitionApi = async (
+  options: ApiClientOptions,
+  payload: AdminTestApiPayload,
+): Promise<AdminTestApiResult> => {
+  return normalizeTestApiResult(
+    await createApiClient(options).request<unknown>('/system-config/test/ocrApi', {
+      body: { ...payload },
+      method: 'POST',
+    }),
+  );
+};
+
+/**
+ * Prepares the CLIP database table on the server.
+ * @param options Authenticated API client options.
+ */
+export const prepareAdminClipTable = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/db/prepareCLIP', { method: 'POST' });
+};
+
+/**
+ * Prepares the facial-recognition V2 database table on the server.
+ * @param options Authenticated API client options.
+ */
+export const prepareAdminFaceRegV2Table = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/db/prepareFaceRegV2', { method: 'POST' });
+};
+
+/**
+ * Switches the facial-recognition implementation version.
+ * @param options Authenticated API client options.
+ * @param open Whether to use V2.
+ */
+export const switchAdminFaceRegV2 = (options: ApiClientOptions, open: boolean): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/system-config/switchUseFaceRegV2', {
+    body: { open },
+    method: 'POST',
+  });
+};
+
+/**
+ * Fetches the offline license machine id.
+ * @param options Authenticated API client options.
+ */
+export const fetchAdminOfflineId = async (options: ApiClientOptions): Promise<string> => {
+  const payload = await createApiClient(options).request<unknown>('/system-config/offlineID', {
+    method: 'POST',
+  });
+  const record = unwrapRecord(payload);
+
+  return readString(record, ['oid', 'offlineId', 'id']);
+};
+
+/**
+ * Binds an online or offline license key.
+ * @param options Authenticated API client options.
+ * @param license License text.
+ * @param type Optional license mode.
+ */
+export const bindAdminLicense = (
+  options: ApiClientOptions,
+  license: string,
+  type?: 'offline',
+): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/gateway/bindLicense', {
+    body: type ? { license, type } : { license },
+    method: 'POST',
+  });
+};
+
+/**
+ * Requests the server to verify the current license online.
+ * @param options Authenticated API client options.
+ */
+export const verifyAdminLicenseOnline = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/gateway/verifyAuthOnline', { method: 'POST' });
+};
+
+/**
+ * Starts the server-side manual upgrade flow.
+ * @param options Authenticated API client options.
+ */
+export const runAdminManualUpgrade = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/install/upgrade', { method: 'POST' });
+};
+
+/**
+ * Requests a server reload after maintenance or upgrade operations.
+ * @param options Authenticated API client options.
+ */
+export const reloadAdminServer = (options: ApiClientOptions): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/install/reload', { method: 'POST' });
 };
 
 const normalizeGalleryList = (payload: unknown): AdminGallery[] => {
@@ -871,6 +1341,43 @@ const normalizeFileDeleteLog = (item: unknown, index: number): AdminFileDeleteLo
   };
 };
 
+const normalizeDeletedFilesResult = (payload: unknown): AdminDeletedFilesResult => {
+  const record = unwrapRecord(payload);
+  const groups = normalizeListPayload(record.result ?? record.list ?? payload).map(normalizeDeletedFileGroup);
+
+  return {
+    duplicateFiles: toRecord(record.duplicateFiles),
+    groups,
+    totalCount: readNumber(record, ['totalCount', 'count', 'total']) || countDeletedFileRows(groups),
+    ver: readOptionalNumber(record, ['ver', 'version']),
+  };
+};
+
+const normalizeDeletedFileGroup = (item: unknown): AdminDeletedFileGroup => {
+  const record = toRecord(item);
+
+  return {
+    addr: readString(record, ['addr', 'address']) || undefined,
+    day: readString(record, ['day', 'date']) || '未知日期',
+    list: normalizeListPayload(record.list ?? record.files).map(normalizeDeletedFile),
+  };
+};
+
+const normalizeDeletedFile = (item: unknown): AdminDeletedFileRecord => {
+  const record = toRecord(item);
+
+  return {
+    fileName: readString(record, ['fileName', 'name']) || '-',
+    filePath: readString(record, ['filePath', 'path']) || '-',
+    id: readNumber(record, ['id']),
+    md5: readString(record, ['MD5', 'md5']),
+  };
+};
+
+const countDeletedFileRows = (groups: AdminDeletedFileGroup[]): number => {
+  return groups.reduce((total, group) => total + group.list.length, 0);
+};
+
 const normalizeGalleryScanSettings = (payload: unknown): AdminGalleryScanSettings => {
   const configs = normalizeSystemConfigList(payload);
   const readValue = (key: string): string | undefined => configs.find((item) => item.key === key)?.value;
@@ -913,11 +1420,52 @@ const normalizeGalleryScanSettings = (payload: unknown): AdminGalleryScanSetting
   };
 };
 
+const normalizeSystemConfigRecords = (payload: unknown): AdminSystemConfigRecord[] => {
+  return normalizeListPayload(payload).map((item) => {
+    const record = toRecord(item);
+
+    return {
+      description: readString(record, ['description', 'desc']) || undefined,
+      key: readString(record, ['key']),
+      type: readString(record, ['type']) || undefined,
+      updatedAt: readString(record, ['updated_at', 'updatedAt']) || undefined,
+      value: readConfigPrimitiveValue(record.value),
+    };
+  }).filter((item) => item.key);
+};
+
+const normalizeSystemConfigInfo = (payload: unknown): AdminSystemConfigInfo => {
+  const record = unwrapRecord(payload);
+  const cpuThreadNum = readOptionalNumber(record, ['cpuThreadNum', 'cpu_thread_num']) ?? 1;
+  const taskMaxThreadNum = readOptionalNumber(record, ['taskMaxThreadNum', 'task_max_thread_num']) ?? cpuThreadNum;
+
+  return {
+    cacheVer: readOptionalNumber(record, ['cacheVer', 'cacheVersion']),
+    categoryOneId: readOptionalNumber(record, ['categoryOneId']),
+    cpuThreadNum,
+    dbTZ: readString(record, ['dbTZ', 'dbTz']),
+    faceRegVer: readString(record, ['faceRegVer', 'faceApiVersion']),
+    items: normalizeInfoItems(payload),
+    taskMaxThreadNum,
+  };
+};
+
 const normalizeTaskList = (payload: unknown): AdminTask[] => {
   const rootRecord = unwrapRecord(payload);
   const sharedStage = normalizeTaskStage(rootRecord.subData);
 
   return normalizeListPayload(payload).map((item, index) => normalizeTask(item, index, sharedStage));
+};
+
+const normalizeActiveTaskOverview = (payload: unknown): AdminActiveTaskOverview => {
+  const record = unwrapRecord(payload);
+  const stage = normalizeTaskStage(record.subData);
+
+  return {
+    stage,
+    tasks: normalizeListPayload(payload).map((item, index) => normalizeTask(item, index, stage)),
+    thumbTaskMaxNum: readOptionalNumber(record, ['THUMB_TASK_MAX_NUM', 'thumbTaskMaxNum']),
+  };
 };
 
 /**
@@ -927,6 +1475,7 @@ const normalizeTask = (item: unknown, index: number, sharedStage?: AdminTaskStag
   const record = toRecord(item);
   const dataRecord = toRecord(record.data);
   const taskType = readString(record, ['name', 'jobName', 'taskName', 'type']);
+  const progressNumbers = readTaskProgressNumbers(record, dataRecord);
 
   return {
     dataType: readString(dataRecord, ['type', 'taskType', 'jobType']),
@@ -936,6 +1485,8 @@ const normalizeTask = (item: unknown, index: number, sharedStage?: AdminTaskStag
     name: formatTaskDisplayName(taskType) || `任务 ${index + 1}`,
     progressLabel: formatTaskProgress(record, dataRecord),
     progressPercent: readTaskProgressPercent(record, dataRecord),
+    progressTotal: progressNumbers.total,
+    progressValue: progressNumbers.value,
     stage: sharedStage,
     startFrom: readString(dataRecord, ['startFrom', 'sourceTask', 'from']),
     statusLabel: readTaskStatusLabel(record),
@@ -970,13 +1521,47 @@ const normalizeInfoItems = (payload: unknown): AdminInfoItem[] => {
     }));
 };
 
+const normalizeDatabaseReindexInfo = (payload: unknown): AdminDatabaseReindexInfo => {
+  const record = unwrapRecord(payload);
+  const current = readNumber(record, ['i', 'current', 'progress', 'value']);
+  const total = readOptionalNumber(record, ['len', 'total', 'totalCount']) ?? (current > 100 ? current : 100);
+
+  return {
+    current,
+    status: readString(record, ['status', 'message']) || undefined,
+    total,
+  };
+};
+
+const normalizeLogRecords = (payload: unknown): AdminLogRecord[] => {
+  return normalizeListPayload(payload).map((item) => {
+    const record = toRecord(item);
+
+    return {
+      level: readString(record, ['level', 'type']) || 'info',
+      message: readString(record, ['message', 'msg', 'text']) || formatInfoValue(item),
+      timestamp: readString(record, ['timestamp', 'time', 'createdAt']) || undefined,
+    };
+  });
+};
+
+const normalizeTestApiResult = (payload: unknown): AdminTestApiResult => {
+  const record = unwrapRecord(payload);
+
+  return {
+    err: readString(record, ['err', 'msg', 'message']) || undefined,
+    pass: normalizeBoolean(record.pass),
+    response: record.response,
+  };
+};
+
 const normalizeSystemConfigList = (payload: unknown): Array<{ key: string; value: string }> => {
   return normalizeListPayload(payload).map((item) => {
     const record = toRecord(item);
 
     return {
       key: readString(record, ['key']),
-      value: readString(record, ['value']),
+      value: readConfigPrimitiveValue(record.value),
     };
   }).filter((item) => item.key);
 };
@@ -1151,7 +1736,7 @@ const formatTaskDisplayName = (value: string): string => {
     return '';
   }
 
-  const exactLabel = TASK_NAME_LABELS[value.trim()];
+  const exactLabel = ADMIN_TASK_TYPE_LABELS[value.trim()];
 
   if (exactLabel) {
     return exactLabel;
@@ -1216,6 +1801,19 @@ const readTaskProgressPercent = (
   const progress = readOptionalNumber(record, ['progress', 'percent', 'processedPercent']);
 
   return progress === undefined ? undefined : clampPercent(progress);
+};
+
+const readTaskProgressNumbers = (
+  record: UnknownRecord,
+  dataRecord: UnknownRecord,
+): { total?: number; value?: number } => {
+  const barRecord = toRecord(dataRecord.bar ?? record.bar);
+  const value = readOptionalNumber(barRecord, ['value', 'processed', 'processedCount'])
+    ?? readOptionalNumber(record, ['processed', 'processedCount']);
+  const total = readOptionalNumber(barRecord, ['total', 'totalCount'])
+    ?? readOptionalNumber(record, ['total', 'totalCount']);
+
+  return { total, value };
 };
 
 const readTaskStatusLabel = (record: UnknownRecord): string => {
@@ -1348,6 +1946,45 @@ const formatInfoValue = (value: unknown): string => {
   }
 
   return JSON.stringify(value);
+};
+
+const readConfigPrimitiveValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return JSON.stringify(value);
+};
+
+const normalizeBoolean = (payload: unknown): boolean => {
+  if (typeof payload === 'boolean') {
+    return payload;
+  }
+
+  const record = unwrapRecord(payload);
+  const value = record.value ?? record.paused ?? record.isPaused ?? record.success ?? payload;
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return value > 0;
+  }
+
+  if (typeof value === 'string') {
+    return ['1', 'on', 'true', 'yes'].includes(value.toLowerCase());
+  }
+
+  return false;
 };
 
 const isDisplayableValue = (value: unknown): boolean => {

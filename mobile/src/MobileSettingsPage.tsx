@@ -1,23 +1,28 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import {
   Pressable,
+  RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   MOBILE_MENU_MAX_COUNT,
   REQUIRED_MOBILE_MENU_PAGE,
 } from './mobile-navigation';
-import type { MobileThemeName } from './mobile-storage';
+import type {
+  MobileExternalVideoPlayer,
+  MobileThemeName,
+} from './mobile-storage';
 import {
   MOBILE_SAGE_NEUTRALS,
   MOBILE_SAGE_SLATE,
   MOBILE_THEME_NAMES,
   MOBILE_THEME_TOKENS,
 } from './mobile-theme';
-import { MobilePullRefreshScrollView } from './MobileLoadingState';
 import type { MobilePage, MobileSession } from './mobile-types';
 import {
   AddressInput,
@@ -30,6 +35,7 @@ import {
 import {
   formatAdminTab,
   formatCardSize,
+  formatExternalVideoPlayer,
   formatSortPreference,
   formatStorageSize,
   formatTimestamp,
@@ -38,34 +44,48 @@ import { useMobileSettingsController } from './settings/hooks/useMobileSettingsC
 
 interface MobileSettingsPageProps {
   activeTheme: MobileThemeName;
+  externalVideoPlayer: MobileExternalVideoPlayer;
   mobileMenuPages: MobilePage[];
   onApplyServerUrl: (serverUrl: string) => Promise<void>;
+  onChangeExternalVideoPlayer: (player: MobileExternalVideoPlayer) => void;
   onChangeActiveTheme: (theme: MobileThemeName) => void;
   onChangeMobileMenuPages: (pages: MobilePage[]) => void;
   onLogout: () => void;
   session: MobileSession;
 }
 
+const SETTINGS_BOTTOM_TABBAR_PADDING = 132;
+const SETTINGS_BOTTOM_TABBAR_SAFE_AREA_OFFSET = 98;
+
 /**
  * Renders mobile settings synchronized with the Web settings feature set.
  */
 export const MobileSettingsPage = ({
   activeTheme,
+  externalVideoPlayer,
   mobileMenuPages,
   onApplyServerUrl,
+  onChangeExternalVideoPlayer,
   onChangeActiveTheme,
   onChangeMobileMenuPages,
   onLogout,
   session,
 }: MobileSettingsPageProps) => {
+  const safeAreaInsets = useSafeAreaInsets();
+  const contentBottomPadding = Math.max(
+    SETTINGS_BOTTOM_TABBAR_PADDING,
+    safeAreaInsets.bottom + SETTINGS_BOTTOM_TABBAR_SAFE_AREA_OFFSET,
+  );
   const {
     activeThemeToken,
     applyingServer,
     availableNavItems,
     backupUrl,
     cacheStats,
+    confirmClearAllCache,
     confirmClearCache,
     confirmResetBehavior,
+    handleChangeExternalVideoPlayer,
     handleChangePreferredServerAddress,
     handleChangeTheme,
     handleSaveServerAddresses,
@@ -88,8 +108,10 @@ export const MobileSettingsPage = ({
     visibleAddressHistory,
   } = useMobileSettingsController({
     activeTheme,
+    externalVideoPlayer,
     mobileMenuPages,
     onApplyServerUrl,
+    onChangeExternalVideoPlayer,
     onChangeActiveTheme,
     onChangeMobileMenuPages,
     session,
@@ -111,12 +133,18 @@ export const MobileSettingsPage = ({
         </View>
       ) : null}
 
-      <MobilePullRefreshScrollView
-        contentContainerStyle={styles.content}
-        onRefresh={loadSettings}
-        refreshing={loading}
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: contentBottomPadding }]}
+        refreshControl={(
+          <RefreshControl
+            colors={[activeThemeToken.hex]}
+            onRefresh={loadSettings}
+            progressBackgroundColor="#fff"
+            refreshing={loading}
+            tintColor={activeThemeToken.hex}
+          />
+        )}
         showsVerticalScrollIndicator={false}
-        theme={activeThemeToken}
       >
         <SectionCard
           action={
@@ -238,18 +266,40 @@ export const MobileSettingsPage = ({
         </SectionCard>
 
         <SectionCard
+          description="开启后视频大屏会显示 Infuse 入口，用服务端原视频地址交给外部播放器。"
+          meta={formatExternalVideoPlayer(externalVideoPlayer)}
+          title="视频外部播放器"
+        >
+          <View style={styles.radioRow}>
+            <RadioPill
+              active={externalVideoPlayer === 'none'}
+              label="关闭"
+              onPress={() => handleChangeExternalVideoPlayer('none')}
+              themeColor={activeThemeToken.hex}
+            />
+            <RadioPill
+              active={externalVideoPlayer === 'infuse'}
+              label="Infuse"
+              onPress={() => handleChangeExternalVideoPlayer('infuse')}
+              themeColor={activeThemeToken.hex}
+            />
+          </View>
+        </SectionCard>
+
+        <SectionCard
           action={
             <Pressable onPress={() => void handleToggleLocalCache()} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>{localCacheEnabled ? '关闭' : '开启'}</Text>
             </Pressable>
           }
-          description="开启后文件夹页会先展示本地目录快照，并按文件夹细分缓存封面、列表缩略图、高清缩略图和预览媒体。"
+          description="开启后文件夹页会先展示本地目录快照，并按文件夹细分缓存封面、列表缩略图、视频海报、高清缩略图和预览媒体。"
           meta={localCacheEnabled ? '已开启' : '已关闭'}
           title="本地缓存"
         >
           <InfoRow label="目录快照" value={`${cacheStats.directoryCount} 个`} />
           <InfoRow label="文件夹封面" value={`${cacheStats.coverCount} 张`} />
           <InfoRow label="列表缩略图" value={`${cacheStats.thumbnailCount} 张`} />
+          <InfoRow label="视频海报" value={`${cacheStats.videoPosterCount} 张`} />
           <InfoRow label="高清缩略图" value={`${cacheStats.hdThumbnailCount} 张`} />
           <InfoRow label="原图预览" value={`${cacheStats.originalImageCount} 张`} />
           <InfoRow label="视频预览" value={`${cacheStats.originalVideoCount} 个`} />
@@ -257,6 +307,9 @@ export const MobileSettingsPage = ({
           <InfoRow label="最近缓存" value={formatTimestamp(cacheStats.latestCachedAt)} />
           <Pressable onPress={confirmClearCache} style={styles.secondaryButton}>
             <Text style={styles.secondaryButtonText}>清理本账号缓存</Text>
+          </Pressable>
+          <Pressable onPress={confirmClearAllCache} style={styles.dangerButton}>
+            <Text style={styles.dangerButtonText}>清理全部移动端缓存</Text>
           </Pressable>
         </SectionCard>
 
@@ -287,7 +340,7 @@ export const MobileSettingsPage = ({
             <Text style={styles.dangerButtonText}>退出登录</Text>
           </Pressable>
         </SectionCard>
-      </MobilePullRefreshScrollView>
+      </ScrollView>
     </View>
   );
 };
@@ -353,7 +406,6 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: 12,
-    paddingBottom: 76,
   },
   countPill: {
     color: MOBILE_SAGE_SLATE.subtle,

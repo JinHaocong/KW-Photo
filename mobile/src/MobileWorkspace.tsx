@@ -9,8 +9,15 @@ import { MobileFoldersHome } from './MobileFoldersHome';
 import { MobileLoadingState } from './MobileLoadingState';
 import { MobileSettingsPage } from './MobileSettingsPage';
 import { MOBILE_NAV_ITEMS, normalizeMobileMenuPages } from './mobile-navigation';
-import { mergeMobilePreferences, readMobilePreferences } from './mobile-storage';
-import type { MobileThemeName } from './mobile-storage';
+import {
+  DEFAULT_MOBILE_EXTERNAL_VIDEO_PLAYER,
+  mergeMobilePreferences,
+  readMobilePreferences,
+} from './mobile-storage';
+import type {
+  MobileExternalVideoPlayer,
+  MobileThemeName,
+} from './mobile-storage';
 import {
   DEFAULT_MOBILE_THEME,
   MobileThemeContext,
@@ -49,6 +56,8 @@ export const MobileWorkspace = ({
   const [activeTheme, setActiveTheme] = useState<MobileThemeName>(initialActiveTheme);
   const [folderRootRequest, setFolderRootRequest] = useState(0);
   const [foldersMounted, setFoldersMounted] = useState(false);
+  const [externalVideoPlayer, setExternalVideoPlayer] =
+    useState<MobileExternalVideoPlayer>(DEFAULT_MOBILE_EXTERNAL_VIDEO_PLAYER);
   const [mobileMenuPages, setMobileMenuPages] = useState<MobilePage[]>(
     () => normalizeMobileMenuPages(undefined, session.user.isAdmin),
   );
@@ -67,9 +76,16 @@ export const MobileWorkspace = ({
   );
   const tabbarSafeAreaStyle = useMemo(
     () => ({
-      paddingBottom: Math.max(8, safeAreaInsets.bottom - 12),
+      paddingBottom: Math.max(10, safeAreaInsets.bottom - 10),
     }),
     [safeAreaInsets.bottom],
+  );
+  const activeTabbarItemStyle = useMemo(
+    () => ({
+      backgroundColor: hexToRgba(activeThemeToken.selection, 0.54),
+      borderColor: hexToRgba(activeThemeToken.light, 0.58),
+    }),
+    [activeThemeToken.light, activeThemeToken.selection],
   );
 
   useEffect(() => {
@@ -101,6 +117,7 @@ export const MobileWorkspace = ({
 
       const nextTheme = preferences.activeTheme ?? initialActiveThemeRef.current;
 
+      setExternalVideoPlayer(preferences.externalVideoPlayer ?? DEFAULT_MOBILE_EXTERNAL_VIDEO_PLAYER);
       setActiveTheme(nextTheme);
       onChangeRootThemeRef.current(nextTheme);
       setMobileMenuPages(nextMenuPages);
@@ -176,6 +193,14 @@ export const MobileWorkspace = ({
     void mergeMobilePreferences({ activeTheme: theme });
   };
 
+  /**
+   * Stores the preferred external video player and exposes it to the mounted folder preview.
+   */
+  const handleChangeExternalVideoPlayer = (player: MobileExternalVideoPlayer): void => {
+    setExternalVideoPlayer(player);
+    void mergeMobilePreferences({ externalVideoPlayer: player });
+  };
+
   if (!preferencesHydrated) {
     return (
       <View style={styles.bootPanel}>
@@ -196,6 +221,7 @@ export const MobileWorkspace = ({
           {shouldRenderFolders ? (
             <View style={activePage === 'folders' ? styles.pageVisible : styles.pageHidden}>
               <MobileFoldersHome
+                externalVideoPlayer={externalVideoPlayer}
                 onChangeTokens={onChangeTokens}
                 onLogout={onLogout}
                 rootRequestVersion={folderRootRequest}
@@ -209,8 +235,10 @@ export const MobileWorkspace = ({
           {activePage === 'settings' ? (
             <MobileSettingsPage
               activeTheme={activeTheme}
+              externalVideoPlayer={externalVideoPlayer}
               mobileMenuPages={mobileMenuPages}
               onApplyServerUrl={onApplyServerUrl}
+              onChangeExternalVideoPlayer={handleChangeExternalVideoPlayer}
               onChangeActiveTheme={handleChangeActiveTheme}
               onChangeMobileMenuPages={handleChangeMobileMenuPages}
               onLogout={onLogout}
@@ -228,9 +256,9 @@ export const MobileWorkspace = ({
 
         <View pointerEvents="box-none" style={styles.tabbarFrame}>
           <BlurView
-            intensity={74}
+            intensity={88}
             style={[styles.tabbarGlass, tabbarSafeAreaStyle]}
-            tint="systemUltraThinMaterialLight"
+            tint="default"
           >
             <View style={styles.tabbarContent}>
               {visibleNavItems.map((item) => (
@@ -240,9 +268,7 @@ export const MobileWorkspace = ({
                   style={[
                     styles.tabbarItem,
                     activePage === item.key ? styles.activeTabbarItem : null,
-                    activePage === item.key
-                      ? { backgroundColor: activeThemeToken.selection, borderColor: activeThemeToken.light }
-                      : null,
+                    activePage === item.key ? activeTabbarItemStyle : null,
                   ]}
                 >
                   <Ionicons
@@ -270,7 +296,7 @@ export const MobileWorkspace = ({
 };
 
 const MOBILE_PAGE_DESCRIPTIONS: Record<MobilePage, string> = {
-  admin: '图库、任务、用户、缓存和系统状态维护。',
+  admin: '图库、任务、用户、缓存和系统配置维护。',
   albums: '相册集合、分享相册和自动相册规则。',
   folders: '按真实目录浏览、预览和整理文件。',
   hidden: '隐私文件浏览与隐藏状态管理。',
@@ -291,6 +317,23 @@ const MOBILE_PAGE_DESCRIPTIONS: Record<MobilePage, string> = {
  */
 const getFallbackMobilePage = (pages: MobilePage[]): MobilePage => {
   return pages[0] ?? 'settings';
+};
+
+/**
+ * Converts six-digit theme colors into translucent overlays for the blurred tabbar.
+ */
+const hexToRgba = (hex: string, alpha: number): string => {
+  const value = hex.replace('#', '');
+
+  if (value.length !== 6) {
+    return hex;
+  }
+
+  const red = Number.parseInt(value.slice(0, 2), 16);
+  const green = Number.parseInt(value.slice(2, 4), 16);
+  const blue = Number.parseInt(value.slice(4, 6), 16);
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 };
 
 /**
@@ -449,8 +492,8 @@ const styles = StyleSheet.create({
   },
   tabbarGlass: {
     ...MOBILE_SAGE_SHADOWS.floating,
-    backgroundColor: 'rgba(255, 255, 255, 0.68)',
-    borderTopColor: 'rgba(255, 255, 255, 0.82)',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderTopColor: 'rgba(255, 255, 255, 0.32)',
     borderTopWidth: 1,
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,

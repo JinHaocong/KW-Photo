@@ -50,6 +50,7 @@ export const AdminOverviewPanel = ({
           sum +
           folder.coverCount +
           folder.thumbnailCount +
+          folder.videoPosterCount +
           folder.hdThumbnailCount +
           folder.originalImageCount +
           folder.originalVideoCount,

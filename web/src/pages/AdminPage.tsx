@@ -90,17 +90,21 @@ export const AdminPage = ({ onShowToast, uploadTasks }: AdminPageProps) => {
   return (
     <div className="admin-page">
       <div className="admin-grid">
-        <nav className="admin-tabs" aria-label="管理中心模块">
+        <nav className="admin-tabs admin-page-tabs" aria-label="管理中心模块">
           {ADMIN_TABS.map((tab) => (
             <button
               className={activeTab === tab.key ? "is-active" : ""}
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
               type="button"
             >
-              {tab.icon}
-              {tab.label}
+              <span className="admin-page-tabs__icon">{tab.icon}</span>
+              <span className="admin-page-tabs__copy">
+                <span className="admin-page-tabs__label">{tab.label}</span>
+                <span className="admin-page-tabs__description">
+                  {tab.description}
+                </span>
+              </span>
             </button>
           ))}
         </nav>

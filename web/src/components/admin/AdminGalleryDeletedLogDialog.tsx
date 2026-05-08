@@ -69,18 +69,9 @@ export const AdminGalleryDeletedLogDialog = ({
       }
       onClose={onClose}
       open={open}
-      title={
-        <div className="gallery-editor-dialog__header">
-          <div>
-            <h3>文件删除记录</h3>
-            <p>{page ? `${page.count} 条记录` : '正在读取删除日志'}</p>
-          </div>
-          <button aria-label="关闭文件删除记录" className="icon-btn" onClick={onClose} type="button">
-            <X size={18} />
-          </button>
-        </div>
-      }
+      title="文件删除记录"
     >
+      <p style={{ margin: '0 0 16px 0', color: 'var(--text-secondary)' }}>{page ? `${page.count} 条记录` : '正在读取删除日志'}</p>
       <div className="admin-delete-log-table">
         <div className="admin-delete-log-row is-head">
           <span>操作用户</span>

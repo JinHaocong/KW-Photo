@@ -30,6 +30,7 @@ interface CacheFolderTotals {
   originalVideoCount: number;
   size: number;
   thumbnailCount: number;
+  videoPosterCount: number;
 }
 
 interface CacheFolderTreeNode {
@@ -80,6 +81,10 @@ export const CacheManagementPanel = ({
   );
   const originalVideoCount = useMemo(
     () => folders.reduce((sum, folder) => sum + folder.originalVideoCount, 0),
+    [folders],
+  );
+  const videoPosterCount = useMemo(
+    () => folders.reduce((sum, folder) => sum + folder.videoPosterCount, 0),
     [folders],
   );
   const folderTree = useMemo(() => buildCacheFolderTree(folders), [folders]);
@@ -204,6 +209,10 @@ export const CacheManagementPanel = ({
           <strong>{hdThumbnailCount}</strong>
         </article>
         <article>
+          <span>视频海报</span>
+          <strong>{videoPosterCount}</strong>
+        </article>
+        <article>
           <span>文件夹封面</span>
           <strong>{coverCount}</strong>
         </article>
@@ -260,6 +269,7 @@ const EMPTY_CACHE_TOTALS: CacheFolderTotals = {
   originalVideoCount: 0,
   size: 0,
   thumbnailCount: 0,
+  videoPosterCount: 0,
 };
 
 const CacheFolderTreeRow = ({
@@ -300,6 +310,7 @@ const CacheFolderTreeRow = ({
         <div className="cache-folder-row__meta">
           <span>{node.branchTotals.directoryCount} 个目录快照</span>
           <span>{node.branchTotals.thumbnailCount} 张缩略图</span>
+          <span>{node.branchTotals.videoPosterCount} 张视频海报</span>
           <span>{node.branchTotals.hdThumbnailCount} 张高清图</span>
           <span>{node.branchTotals.coverCount} 张封面</span>
           <span>{node.branchTotals.originalImageCount} 张原图</span>
@@ -430,6 +441,7 @@ const createTotalsFromFolder = (folder: LocalCacheFolderSummary): CacheFolderTot
   originalVideoCount: folder.originalVideoCount,
   size: folder.size,
   thumbnailCount: folder.thumbnailCount,
+  videoPosterCount: folder.videoPosterCount,
 });
 
 const addCacheTotals = (target: CacheFolderTotals, source: CacheFolderTotals): CacheFolderTotals => {
@@ -442,6 +454,7 @@ const addCacheTotals = (target: CacheFolderTotals, source: CacheFolderTotals): C
   target.originalVideoCount += source.originalVideoCount;
   target.size += source.size;
   target.thumbnailCount += source.thumbnailCount;
+  target.videoPosterCount += source.videoPosterCount;
 
   return target;
 };

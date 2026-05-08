@@ -115,18 +115,9 @@ export const AdminGalleryStatsDialog = ({
       className="gallery-editor-dialog gallery-stats-dialog"
       onClose={onClose}
       open={true}
-      title={
-        <div className="gallery-editor-dialog__header">
-          <div>
-            <h3>图库信息统计&自动扫描</h3>
-            <p>全部图库统计会去重同一文件夹；自动扫描开关保存到服务端系统配置。</p>
-          </div>
-          <button aria-label="关闭图库信息统计" className="icon-btn" onClick={onClose} type="button">
-            <X size={18} />
-          </button>
-        </div>
-      }
+      title="图库信息统计&自动扫描"
     >
+      <p>全部图库统计会去重同一文件夹；自动扫描开关保存到服务端系统配置。</p>
 
         <div className="gallery-stats-toolbar">
           <div>

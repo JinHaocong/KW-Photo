@@ -216,7 +216,15 @@ export const FilePreviewDialog = ({
         authCode,
         baseUrl: serverUrl,
         md5: activeFile.md5,
-        type: activeIsVideo ? 'poster' : 'h220',
+        type: 'h220',
+      })
+    : undefined;
+  const activeVideoPosterUrl = activeFile && activeIsVideo
+    ? createThumbnailUrl({
+        authCode,
+        baseUrl: serverUrl,
+        md5: activeFile.md5,
+        type: 'poster',
       })
     : undefined;
   const activeHdImageUrl = activeFile && !activeIsVideo
@@ -306,7 +314,19 @@ export const FilePreviewDialog = ({
     persistFetchedResource: cacheEnabled,
     showSourceOnMiss: !nativeAppRuntime,
     sourceUrl: activePosterUrl,
-    variant: activeIsVideo ? 'poster' : 'h220',
+    variant: 'h220',
+  });
+  const activeVideoPosterCache = useCachedMediaUrl({
+    enabled: Boolean(activeIsVideo && activeVideoPosterUrl),
+    fetchOnMiss: cacheEnabled || nativeAppRuntime,
+    fileId: activeFile?.id,
+    folder: cacheFolder,
+    kind: 'video-poster',
+    md5: activeFile?.md5,
+    persistFetchedResource: cacheEnabled,
+    showSourceOnMiss: false,
+    sourceUrl: activeVideoPosterUrl,
+    variant: 'poster',
   });
   const previewThumbnailUrls = usePreviewThumbnailUrls({
     authCode,
@@ -326,6 +346,7 @@ export const FilePreviewDialog = ({
     ? previewDisplayedImageUrl ??
       (previewHdReady ? activeHdImageCache.displayUrl : activePosterCache.displayUrl)
     : undefined;
+  const activeVideoPosterDisplayUrl = activeVideoPosterCache.displayUrl ?? activePosterCache.displayUrl;
   const previewActionDisabled = Boolean(previewPendingImageSource) ||
     videoPreparing ||
     !activeFile ||
@@ -364,7 +385,7 @@ export const FilePreviewDialog = ({
         createPreviewSlide({
           activeFile,
           activeImageUrl: activeImagePreviewUrl,
-          activePosterUrl: activePosterCache.displayUrl,
+          activePosterUrl: activeIsVideo ? activeVideoPosterDisplayUrl : activePosterCache.displayUrl,
           activeVideoUrl: activeIsVideo ? activeVideoCache.displayUrl : undefined,
           authCode,
           file: previewFile,
@@ -377,6 +398,7 @@ export const FilePreviewDialog = ({
       activeFile,
       activeIsVideo,
       activeImagePreviewUrl,
+      activeVideoPosterDisplayUrl,
       activePosterCache.displayUrl,
       activeVideoCache.displayUrl,
       authCode,
@@ -1540,16 +1562,7 @@ const PreviewAlbumDialog = ({
       onClose={onClose}
       open={open}
       overlayClassName="file-preview-album-overlay"
-      title={
-        <div className="file-preview-album-dialog__header">
-          <div>
-            <h2>添加到相册</h2>
-          </div>
-          <button aria-label="关闭相册选择" className="icon-btn" onClick={onClose} type="button">
-            <X size={18} />
-          </button>
-        </div>
-      }
+      title="添加到相册"
     >
       {loading ? <div className="file-preview__hint">正在读取相册...</div> : null}
       {error ? <div className="file-preview__hint is-error">{error}</div> : null}
@@ -1688,7 +1701,7 @@ const usePreviewThumbnailUrls = ({
         authCode,
         baseUrl: serverUrl,
         md5: previewFile.md5,
-        type: isVideoFileType(previewFile.fileType) ? 'poster' : 'h220',
+        type: 'h220',
       });
 
       if (!sourceUrl) {
@@ -1775,7 +1788,7 @@ const resolvePreviewThumbnailBlob = ({
   file: FolderFileSummary;
   sourceUrl: string;
 }): Promise<Blob | undefined> => {
-  const variant = isVideoFileType(file.fileType) ? 'poster' : 'h220';
+  const variant = 'h220';
 
   if (!cacheEnabled) {
     return fetchMediaResourceBlob(sourceUrl);
@@ -1969,7 +1982,7 @@ const createPreviewThumbnailUrl = ({
       authCode,
       baseUrl: serverUrl,
       md5: file.md5,
-      type: isVideoFileType(file.fileType) ? 'poster' : 'h220',
+      type: 'h220',
     }),
   );
 };

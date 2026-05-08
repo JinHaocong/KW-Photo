@@ -24,13 +24,15 @@ export const AdminGalleryWeightDialog = ({
 }: AdminGalleryWeightDialogProps) => {
   return (
     <Modal
+      asForm
+      onSubmit={onSubmit}
       className="gallery-confirm-dialog"
       footer={
         <div className="dialog-actions">
           <button className="secondary-btn" disabled={loading} onClick={onClose} type="button">
             取消
           </button>
-          <button className="primary-btn" disabled={loading} onClick={onSubmit} type="button">
+          <button className="primary-btn" disabled={loading} type="submit">
             保存
           </button>
         </div>

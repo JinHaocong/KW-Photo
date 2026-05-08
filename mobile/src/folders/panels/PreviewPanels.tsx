@@ -12,7 +12,6 @@ import {
 import type { FolderFabIconName } from '../folderConstants';
 import type {
   PreviewImageSource,
-  PreviewMode,
 } from '../folderTypes';
 import { createPreviewDetailRows } from '../folderUtils';
 
@@ -39,10 +38,8 @@ interface PreviewSettingsPanelProps {
   hdReady: boolean;
   imageSource: PreviewImageSource;
   isVideo: boolean;
-  mode: PreviewMode;
   onClose: () => void;
   onToggleMode: () => void;
-  videoPreparing: boolean;
   videoUsesTranscode: boolean;
 }
 
@@ -130,10 +127,8 @@ export const PreviewSettingsPanel = ({
   hdReady,
   imageSource,
   isVideo,
-  mode,
   onClose,
   onToggleMode,
-  videoPreparing,
   videoUsesTranscode,
 }: PreviewSettingsPanelProps) => {
   const theme = useMobileTheme();
@@ -170,12 +165,11 @@ export const PreviewSettingsPanel = ({
         meta="保持完整比例，不裁切长图"
       />
       <PreviewSettingRow
-        active={isVideo && mode === 'original'}
-        disabled={!isVideo || actionDisabled}
+        active={isVideo}
+        disabled={!isVideo}
         icon="play-circle-outline"
-        label="视频 - 自动播放视频："
-        meta={!isVideo ? '当前文件为图片，不使用视频设置' : (videoPreparing ? '正在准备视频转码预览' : '点击后进入应用内视频预览')}
-        onPress={isVideo ? onToggleMode : undefined}
+        label="视频 - 播放控件："
+        meta={!isVideo ? '当前文件为图片，不使用视频设置' : '默认只显示封面，点击封面播放后使用系统播放条'}
       />
       <PreviewSettingRow
         active={isVideo && videoUsesTranscode}

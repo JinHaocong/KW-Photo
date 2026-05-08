@@ -14,6 +14,7 @@ import {
   MOBILE_THEME_TOKENS,
 } from '../../mobile-theme';
 import {
+  clearAllMobileLocalCache,
   clearMobileLocalCache,
   createMobileLocalCacheScope,
   readMobileCacheStats,
@@ -21,6 +22,7 @@ import {
 import type { MobileCacheStats } from '../../mobile-local-cache';
 import type { MobilePage, MobileSession } from '../../mobile-types';
 import type {
+  MobileExternalVideoPlayer,
   MobilePreferences,
   MobileServerAddressRole,
   MobileThemeName,
@@ -39,8 +41,10 @@ type ServerTestTarget = MobileServerAddressRole;
 
 interface UseMobileSettingsControllerParams {
   activeTheme: MobileThemeName;
+  externalVideoPlayer: MobileExternalVideoPlayer;
   mobileMenuPages: MobilePage[];
   onApplyServerUrl: (serverUrl: string) => Promise<void>;
+  onChangeExternalVideoPlayer: (player: MobileExternalVideoPlayer) => void;
   onChangeActiveTheme: (theme: MobileThemeName) => void;
   onChangeMobileMenuPages: (pages: MobilePage[]) => void;
   session: MobileSession;
@@ -57,6 +61,7 @@ const EMPTY_CACHE_STATS: MobileCacheStats = {
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
+  videoPosterCount: 0,
 };
 
 /**
@@ -64,8 +69,10 @@ const EMPTY_CACHE_STATS: MobileCacheStats = {
  */
 export const useMobileSettingsController = ({
   activeTheme,
+  externalVideoPlayer,
   mobileMenuPages,
   onApplyServerUrl,
+  onChangeExternalVideoPlayer,
   onChangeActiveTheme,
   onChangeMobileMenuPages,
   session,
@@ -296,6 +303,15 @@ export const useMobileSettingsController = ({
   };
 
   /**
+   * Clears every mobile cache scope and the cache directory so orphaned media files are removed too.
+   */
+  const handleClearAllCache = async (): Promise<void> => {
+    await clearAllMobileLocalCache();
+    setMessage('全部移动端缓存已清理');
+    await loadSettings();
+  };
+
+  /**
    * Resets last page, last folder and admin tab behavior without clearing login or settings.
    */
   const handleResetBehavior = async (): Promise<void> => {
@@ -341,6 +357,22 @@ export const useMobileSettingsController = ({
   };
 
   /**
+   * Switches the external video player used by folder fullscreen previews.
+   */
+  const handleChangeExternalVideoPlayer = (player: MobileExternalVideoPlayer): void => {
+    if (player === externalVideoPlayer) {
+      return;
+    }
+
+    onChangeExternalVideoPlayer(player);
+    setPreferences((current) => ({
+      ...current,
+      externalVideoPlayer: player,
+    }));
+    setMessage(player === 'infuse' ? '视频外部播放器已设为 Infuse' : '视频外部播放器已关闭');
+  };
+
+  /**
    * Confirms clearing behavior persistence before changing local state.
    */
   const confirmResetBehavior = (): void => {
@@ -360,14 +392,26 @@ export const useMobileSettingsController = ({
     ]);
   };
 
+  /**
+   * Confirms deleting every account cache and the physical mobile cache folder.
+   */
+  const confirmClearAllCache = (): void => {
+    Alert.alert('清理全部移动端缓存', '将清除所有账号、所有服务端下的目录快照、封面图、缩略图、预览媒体，并删除移动端缓存目录。不影响服务端文件。', [
+      { text: '取消', style: 'cancel' },
+      { text: '全部清理', style: 'destructive', onPress: () => void handleClearAllCache() },
+    ]);
+  };
+
   return {
     activeThemeToken,
     applyingServer,
     availableNavItems,
     backupUrl,
     cacheStats,
+    confirmClearAllCache,
     confirmClearCache,
     confirmResetBehavior,
+    handleChangeExternalVideoPlayer,
     handleChangeTheme,
     handleChangePreferredServerAddress,
     handleSaveServerAddresses,

@@ -17,6 +17,7 @@ export interface CacheFolderTotals {
   originalVideoCount: number;
   size: number;
   thumbnailCount: number;
+  videoPosterCount: number;
 }
 
 export interface CacheFolderTreeNode {

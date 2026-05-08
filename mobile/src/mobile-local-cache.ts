@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 
+import { createAsyncConcurrencyLimiter } from '@kwphoto/core';
 import type { FolderDirectory } from '@kwphoto/core';
 
 export type MobileLocalCacheResourceKind =
@@ -9,6 +10,7 @@ export type MobileLocalCacheResourceKind =
   | 'file-thumbnail'
   | 'file-hd-thumbnail'
   | 'image-preview'
+  | 'video-poster'
   | 'video-preview';
 
 export interface MobileLocalCacheFolderRef {
@@ -29,6 +31,7 @@ export interface MobileCacheStats {
   originalImageCount: number;
   originalVideoCount: number;
   thumbnailCount: number;
+  videoPosterCount: number;
 }
 
 export interface MobileCacheFolderSummary {
@@ -48,6 +51,13 @@ export interface MobileCacheFolderSummary {
   scope: string;
   size: number;
   thumbnailCount: number;
+  videoPosterCount: number;
+}
+
+export interface MobileCacheChangeDetail {
+  folderScopeKeys?: string[];
+  reason: 'clear-all' | 'clear-scope' | 'delete-folder' | 'write';
+  scope?: string;
 }
 
 interface MobileLocalCacheRecordMeta {
@@ -93,23 +103,26 @@ interface ReadCachedMobileMediaParams extends Omit<CacheMobileMediaResourceParam
   url?: string;
 }
 
-type MobileCacheChangeListener = () => void;
+type MobileCacheChangeListener = (detail?: MobileCacheChangeDetail) => void;
 
 const MOBILE_CACHE_INDEX_KEY = 'kwphoto.mobile.local-cache.index.v1';
 const MOBILE_CACHE_DATA_PREFIX = 'kwphoto.mobile.local-cache.data.v1:';
 const MOBILE_CACHE_DIRECTORY_NAME = 'kwphoto-local-cache';
 const LEGACY_DIRECTORY_CACHE_INDEX_KEY = 'kwphoto.mobile.directory-cache.index.v1';
 const LEGACY_DIRECTORY_CACHE_PREFIX = 'kwphoto.mobile.directory-cache.v1:';
+const MOBILE_MEDIA_DOWNLOAD_CONCURRENCY = 4;
+const MOBILE_MEDIA_DOWNLOAD_QUEUE_CLEARED_ERROR = new Error('Mobile media download queue cleared');
 const MEDIA_CACHE_FAILURE_TTL = 60_000;
 
 const pendingMediaRequests = new Map<string, Promise<string | undefined>>();
 const mediaFailureMap = new Map<string, number>();
+const mediaDownloadLimiter = createAsyncConcurrencyLimiter(MOBILE_MEDIA_DOWNLOAD_CONCURRENCY);
 const cacheChangeListeners = new Set<MobileCacheChangeListener>();
 let cacheIndexMutationQueue: Promise<void> = Promise.resolve();
 let cacheInvalidationRevision = 0;
 
 /**
- * Subscribes to mobile cache index changes so management screens can refresh statistics as background writes finish.
+ * Subscribes to mobile cache changes so management screens and mounted media views can refresh.
  */
 export const subscribeMobileCacheChanges = (listener: MobileCacheChangeListener): (() => void) => {
   cacheChangeListeners.add(listener);
@@ -347,15 +360,18 @@ export const deleteMobileCacheFolderGroups = async (folderScopeKeys: string[]): 
     await Promise.all(recordsToDelete.map(deleteCachePayload));
     await writeCacheRecordMetasRaw(recordsToKeep);
   });
+
+  notifyMobileCacheChanged({
+    folderScopeKeys: Array.from(targetKeys),
+    reason: 'delete-folder',
+  });
 };
 
 /**
  * Clears cache records for one account scope, or all mobile cache records.
  */
 export const clearMobileLocalCache = async (scope?: string): Promise<void> => {
-  cacheInvalidationRevision += 1;
-  pendingMediaRequests.clear();
-  mediaFailureMap.clear();
+  invalidateMobileCacheRequests();
 
   await enqueueCacheIndexMutation(async () => {
     const records = await readCacheRecordMetasRaw();
@@ -367,6 +383,26 @@ export const clearMobileLocalCache = async (scope?: string): Promise<void> => {
   });
 
   await clearLegacyDirectoryCache();
+  notifyMobileCacheChanged({ reason: scope ? 'clear-scope' : 'clear-all', scope });
+};
+
+/**
+ * Clears every mobile cache scope and removes the physical cache directory, including orphaned media files.
+ */
+export const clearAllMobileLocalCache = async (): Promise<void> => {
+  invalidateMobileCacheRequests();
+
+  await enqueueCacheIndexMutation(async () => {
+    const records = await readCacheRecordMetasRaw();
+
+    await Promise.all(records.map(deleteCachePayload));
+    await clearAllMobileCacheDataKeys();
+    await writeCacheRecordMetasRaw([]);
+  });
+
+  await clearLegacyDirectoryCache();
+  deleteMobileCacheDirectory();
+  notifyMobileCacheChanged({ reason: 'clear-all' });
 };
 
 /**
@@ -385,7 +421,9 @@ const downloadAndWriteMediaCache = async (
       targetFile.delete();
     }
 
-    const downloadedFile = await File.downloadFileAsync(params.url, targetFile, { idempotent: true });
+    const downloadedFile = await mediaDownloadLimiter.run(() => (
+      File.downloadFileAsync(params.url, targetFile, { idempotent: true })
+    ));
     const size = getFileSize(downloadedFile);
 
     if (size <= 0) {
@@ -421,9 +459,13 @@ const downloadAndWriteMediaCache = async (
     });
     mediaFailureMap.delete(key);
     return downloadedFile.uri;
-  } catch {
+  } catch (error) {
     deleteFileUri(targetFile.uri);
-    mediaFailureMap.set(key, Date.now());
+
+    if (error !== MOBILE_MEDIA_DOWNLOAD_QUEUE_CLEARED_ERROR) {
+      mediaFailureMap.set(key, Date.now());
+    }
+
     return undefined;
   }
 };
@@ -437,6 +479,7 @@ const createEmptyCacheStats = (): MobileCacheStats => ({
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
+  videoPosterCount: 0,
 });
 
 const createEmptyCacheFolderSummary = (record: MobileLocalCacheRecordMeta): MobileCacheFolderSummary => ({
@@ -455,6 +498,7 @@ const createEmptyCacheFolderSummary = (record: MobileLocalCacheRecordMeta): Mobi
   scope: record.scope,
   size: 0,
   thumbnailCount: 0,
+  videoPosterCount: 0,
 });
 
 const readCacheRecordMeta = async (key: string): Promise<MobileLocalCacheRecordMeta | undefined> => {
@@ -487,14 +531,21 @@ const enqueueCacheIndexMutation = <TResult,>(mutation: () => Promise<TResult>): 
   return queuedMutation;
 };
 
-const notifyMobileCacheChanged = (): void => {
+const notifyMobileCacheChanged = (detail?: MobileCacheChangeDetail): void => {
   cacheChangeListeners.forEach((listener) => {
     try {
-      listener();
+      listener(detail);
     } catch {
       // Cache listeners are UI refresh hooks and must not break cache writes.
     }
   });
+};
+
+const invalidateMobileCacheRequests = (): void => {
+  cacheInvalidationRevision += 1;
+  pendingMediaRequests.clear();
+  mediaFailureMap.clear();
+  mediaDownloadLimiter.clear(MOBILE_MEDIA_DOWNLOAD_QUEUE_CLEARED_ERROR);
 };
 
 const upsertCacheRecordMeta = async (record: MobileLocalCacheRecordMeta): Promise<void> => {
@@ -534,6 +585,15 @@ const deleteCachePayload = async (record: MobileLocalCacheRecordMeta): Promise<v
   deleteFileUri(record.fileUri);
 };
 
+const clearAllMobileCacheDataKeys = async (): Promise<void> => {
+  const keys = await AsyncStorage.getAllKeys();
+  const dataKeys = keys.filter((key) => key.startsWith(MOBILE_CACHE_DATA_PREFIX));
+
+  if (dataKeys.length > 0) {
+    await AsyncStorage.multiRemove(dataKeys);
+  }
+};
+
 const clearLegacyDirectoryCache = async (): Promise<void> => {
   const legacyKeys = parseJson<string[]>(await AsyncStorage.getItem(LEGACY_DIRECTORY_CACHE_INDEX_KEY)) ?? [];
   const safeLegacyKeys = legacyKeys.filter((key) => key.startsWith(LEGACY_DIRECTORY_CACHE_PREFIX));
@@ -549,6 +609,18 @@ const ensureMobileCacheDirectory = (): Directory => {
   }
 
   return directory;
+};
+
+const deleteMobileCacheDirectory = (): void => {
+  try {
+    const directory = new Directory(Paths.cache, MOBILE_CACHE_DIRECTORY_NAME);
+
+    if (directory.exists) {
+      directory.delete();
+    }
+  } catch {
+    // Full cache cleanup should still finish when the OS already reclaimed cache files.
+  }
 };
 
 const doesFileExist = (uri: string): boolean => {
@@ -623,7 +695,7 @@ const createMediaCacheIdentity = ({
 };
 
 const accumulateCacheResourceCounts = (
-  summary: Pick<MobileCacheStats, 'coverCount' | 'hdThumbnailCount' | 'originalImageCount' | 'originalVideoCount' | 'thumbnailCount'>,
+  summary: Pick<MobileCacheStats, 'coverCount' | 'hdThumbnailCount' | 'originalImageCount' | 'originalVideoCount' | 'thumbnailCount' | 'videoPosterCount'>,
   record: MobileLocalCacheRecordMeta,
 ): void => {
   const category = getCacheResourceCategory(record);
@@ -633,6 +705,7 @@ const accumulateCacheResourceCounts = (
   summary.originalImageCount += category === 'original-image' ? 1 : 0;
   summary.originalVideoCount += category === 'original-video' ? 1 : 0;
   summary.thumbnailCount += category === 'thumbnail' ? 1 : 0;
+  summary.videoPosterCount += category === 'video-poster' ? 1 : 0;
 };
 
 /**
@@ -640,9 +713,13 @@ const accumulateCacheResourceCounts = (
  */
 const getCacheResourceCategory = (
   record: MobileLocalCacheRecordMeta,
-): 'cover' | 'hd-thumbnail' | 'original-image' | 'original-video' | 'thumbnail' | 'unknown' => {
+): 'cover' | 'hd-thumbnail' | 'original-image' | 'original-video' | 'thumbnail' | 'unknown' | 'video-poster' => {
   if (record.kind === 'folder-cover') {
     return 'cover';
+  }
+
+  if (record.kind === 'video-poster' || (record.kind === 'file-thumbnail' && record.variant === 'poster')) {
+    return 'video-poster';
   }
 
   if (

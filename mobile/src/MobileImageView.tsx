@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Image, Pressable, StyleSheet } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
 import type { ImageSourcePropType, ModalProps } from 'react-native';
 
 import { MobileFullscreenModal } from './components/MobileDialog';
@@ -14,10 +14,12 @@ interface MobileImageViewProps {
   HeaderComponent?: ComponentType<{ imageIndex: number }>;
   imageIndex: number;
   images: ImageViewSource[];
+  ItemOverlayComponent?: ComponentType<{ imageIndex: number }>;
   keyExtractor?: (imageSrc: ImageViewSource, index: number) => string;
   onImageIndexChange?: (imageIndex: number) => void;
   onLongPress?: (image: ImageViewSource) => void;
   onRequestClose: () => void;
+  OverlayComponent?: ComponentType<{ imageIndex: number }>;
   presentationStyle?: ModalProps['presentationStyle'];
   swipeToCloseEnabled?: boolean;
   visible: boolean;
@@ -33,7 +35,9 @@ const MobileImageView = ({
   HeaderComponent,
   imageIndex,
   images,
+  ItemOverlayComponent,
   onRequestClose,
+  OverlayComponent,
   visible,
 }: MobileImageViewProps) => {
   const currentImage = images[imageIndex];
@@ -53,6 +57,16 @@ const MobileImageView = ({
       <Pressable onPress={onRequestClose} style={styles.imageFrame}>
         {currentImage ? <Image resizeMode="contain" source={currentImage} style={styles.image} /> : null}
       </Pressable>
+      {ItemOverlayComponent ? (
+        <View pointerEvents="box-none" style={styles.overlay}>
+          <ItemOverlayComponent imageIndex={imageIndex} />
+        </View>
+      ) : null}
+      {OverlayComponent ? (
+        <View pointerEvents="box-none" style={styles.overlay}>
+          <OverlayComponent imageIndex={imageIndex} />
+        </View>
+      ) : null}
       {FooterComponent ? <FooterComponent imageIndex={imageIndex} /> : null}
     </MobileFullscreenModal>
   );
@@ -68,6 +82,9 @@ const styles = StyleSheet.create({
   },
   imageFrame: {
     flex: 1,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
   },
 });
 

@@ -25,7 +25,6 @@ import {
   fetchAdminFileDeleteLogs,
   fetchAdminGalleryDetail,
   fetchAdminGalleryUserLinks,
-  fetchAdminSkippedFolderLogs,
   fetchAdminTasks,
   fetchAdminUsers,
   findAdminDuplicateFiles,
@@ -42,13 +41,13 @@ import type {
   AdminGalleryMutationPayload,
   AdminGalleryStat,
   AdminGalleryUserLink,
-  AdminSkippedFolderLog,
   AdminTask,
   AdminUserRecord,
 } from '../../services/admin-service';
 import type { ApiClientOptions } from '../../services/api-client';
 import { getApiErrorMessage } from '../../services/api-client';
 import type { CurrentUser } from '../../shared/types';
+import { AdminDeletedFilesDialog } from './AdminDeletedFilesDialog';
 import { AdminGalleryConfirmDialog } from './AdminGalleryConfirmDialog';
 import { AdminGalleryDeletedLogDialog } from './AdminGalleryDeletedLogDialog';
 import { AdminGalleryEditorDialog } from './AdminGalleryEditorDialog';
@@ -69,8 +68,10 @@ interface AdminGalleryPanelProps {
  * Provides the gallery management workspace, including list, scan and mutation actions.
  */
 export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: AdminGalleryPanelProps) => {
+  const activeTaskPollingInFlightRef = useRef(false);
   const emptyTaskPollCountRef = useRef(0);
   const [actionLoading, setActionLoading] = useState('');
+  const [deletedFilesOpen, setDeletedFilesOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AdminGallery>();
   const [deletedLogOpen, setDeletedLogOpen] = useState(false);
   const [deletedLogPage, setDeletedLogPage] = useState<AdminFileDeleteLogPage>();
@@ -83,7 +84,6 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   const [menuGalleryKey, setMenuGalleryKey] = useState('');
   const [scanningId, setScanningId] = useState<number | string>();
   const [scanSettingsOpen, setScanSettingsOpen] = useState(false);
-  const [skippedLogs, setSkippedLogs] = useState<AdminSkippedFolderLog[]>([]);
   const [statSummary, setStatSummary] = useState<AdminGalleryStat>();
   const [statsOpen, setStatsOpen] = useState(false);
   const [taskPolling, setTaskPolling] = useState(true);
@@ -103,10 +103,9 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     isError: activeTasksError,
     refetch: refetchActiveTasks,
   } = useQuery({
-    enabled: taskPolling,
+    enabled: false,
     queryFn: () => fetchAdminTasks(apiOptions, 'active'),
     queryKey: ['admin-gallery-active-tasks', apiOptions.baseUrl, currentUser?.id],
-    refetchInterval: taskPolling ? ACTIVE_TASK_REFETCH_INTERVAL : false,
     retry: false,
   });
 
@@ -145,8 +144,50 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   const startTaskPolling = useCallback((): void => {
     emptyTaskPollCountRef.current = 0;
     setTaskPolling(true);
-    void refetchActiveTasks();
-  }, [refetchActiveTasks]);
+  }, []);
+
+  useEffect(() => {
+    if (!taskPolling) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timer: number | undefined;
+
+    /**
+     * Uses a completion-driven polling loop so slow requests cannot overlap with the next tick.
+     */
+    const pollActiveTasks = async (): Promise<void> => {
+      if (activeTaskPollingInFlightRef.current) {
+        if (!cancelled) {
+          timer = window.setTimeout(() => void pollActiveTasks(), ACTIVE_TASK_REFETCH_INTERVAL);
+        }
+        return;
+      }
+
+      activeTaskPollingInFlightRef.current = true;
+
+      try {
+        await refetchActiveTasks();
+      } finally {
+        activeTaskPollingInFlightRef.current = false;
+
+        if (!cancelled) {
+          timer = window.setTimeout(() => void pollActiveTasks(), ACTIVE_TASK_REFETCH_INTERVAL);
+        }
+      }
+    };
+
+    void pollActiveTasks();
+
+    return () => {
+      cancelled = true;
+
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [refetchActiveTasks, taskPolling]);
 
   useEffect(() => {
     const pollVersion = Math.max(activeTasksUpdatedAt, activeTasksErrorAt);
@@ -290,13 +331,11 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     });
   };
 
-  const handleFetchSkippedLogs = async (): Promise<void> => {
-    await runPanelAction('skipped', async () => {
-      const logs = await fetchAdminSkippedFolderLogs(apiOptions);
-
-      setSkippedLogs(logs);
-      onShowToast(logs.length > 0 ? `发现 ${logs.length} 条跳过扫描记录` : '没有跳过扫描记录');
-    });
+  /**
+   * Opens abnormal files in a center dialog without leaving gallery management.
+   */
+  const handleOpenDeletedFiles = (): void => {
+    setDeletedFilesOpen(true);
   };
 
   const handleExportDeletedFiles = async (): Promise<void> => {
@@ -373,7 +412,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
           <BarChart3 size={15} />
           图库信息统计&自动扫描
         </button>
-        <button className="secondary-btn is-danger-soft" disabled={actionLoading === 'skipped'} onClick={() => void handleFetchSkippedLogs()} type="button">
+        <button className="secondary-btn is-danger-soft" onClick={handleOpenDeletedFiles} type="button">
           <AlertTriangle size={15} />
           状态异常文件
         </button>
@@ -397,19 +436,6 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
           <span>照片：{statSummary.photo}</span>
           <span>视频：{statSummary.video}</span>
           <span>总大小：{formatBytes(statSummary.totalSize)}</span>
-        </div>
-      ) : null}
-
-      {skippedLogs.length > 0 ? (
-        <div className="admin-gallery-log-panel">
-          <strong>状态异常文件夹</strong>
-          <div>
-            {skippedLogs.slice(0, 5).map((log) => (
-              <span key={`${log.folderPath}-${log.msg}`} title={`${log.folderPath}：${log.msg}`}>
-                {log.folderPath}：{log.msg}
-              </span>
-            ))}
-          </div>
         </div>
       ) : null}
 
@@ -557,6 +583,15 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
         open={deletedLogOpen}
         page={deletedLogPage}
       />
+
+      {deletedFilesOpen ? (
+        <AdminDeletedFilesDialog
+          apiOptions={apiOptions}
+          onClose={() => setDeletedFilesOpen(false)}
+          onShowToast={onShowToast}
+          open={deletedFilesOpen}
+        />
+      ) : null}
 
       <AdminGalleryWeightDialog
         galleryName={weightTarget?.name}

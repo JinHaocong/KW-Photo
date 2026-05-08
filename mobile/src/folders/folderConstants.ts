@@ -21,15 +21,13 @@ export const DEFAULT_VIEW_MODE: MobileFolderViewMode = 'list';
 export const DEFAULT_CARD_SIZE: MobileFolderCardSize = 'medium';
 
 export const DIRECTORY_FLASH_LIST_DRAW_DISTANCE = 900;
-export const DIRECTORY_PULL_REFRESH_REVEAL_DISTANCE = 18;
-export const DIRECTORY_PULL_REFRESH_TRIGGER_DISTANCE = 72;
 export const LONG_PRESS_DELAY_MS = 520;
 export const MAX_FOLDER_COVER_COUNT = 4;
 export const PREVIEW_NEIGHBOR_PRELOAD_RADIUS = 3;
 export const PREVIEW_NOTICE_DURATION_MS = 2200;
-export const PREVIEW_SWIPE_CLOSE_DISTANCE = 90;
-export const PREVIEW_SWIPE_DIRECTION_RATIO = 1.3;
-export const PREVIEW_SWIPE_STEP_DISTANCE = 70;
+export const PREVIEW_SWIPE_CLOSE_DISTANCE = 58;
+export const PREVIEW_SWIPE_DIRECTION_RATIO = 1.12;
+export const PREVIEW_SWIPE_STEP_DISTANCE = 46;
 
 export const STATUS_COPY: Record<FolderSummary['status'], string> = {
   empty: '空文件夹',

@@ -1,3 +1,5 @@
+import { createAsyncConcurrencyLimiter } from '@kwphoto/core';
+
 import { getDesktopBridge } from '../platform/desktop-bridge';
 import type { FolderDirectory } from './types';
 import { createBrowserMediaUrl } from './media-url';
@@ -13,6 +15,7 @@ export type LocalCacheResourceKind =
   | 'file-thumbnail'
   | 'file-hd-thumbnail'
   | 'image-preview'
+  | 'video-poster'
   | 'video-preview';
 
 export type LocalCachePreferences = WorkspaceLocalCachePreferences;
@@ -36,6 +39,7 @@ export interface LocalCacheFolderSummary extends LocalCacheFolderRef {
   size: number;
   thumbnailCount: number;
   updatedAt: number;
+  videoPosterCount: number;
 }
 
 export interface LocalCacheStorageInfo {
@@ -120,10 +124,13 @@ const LOCAL_CACHE_DB_NAME = 'kwphoto-local-cache';
 const LOCAL_CACHE_DB_VERSION = 2;
 const LOCAL_CACHE_STORE = 'resources';
 const LOCAL_CACHE_EVENT = 'kwphoto-local-cache-change';
+const MEDIA_FETCH_CONCURRENCY = 6;
+const MEDIA_FETCH_QUEUE_CLEARED_ERROR = new Error('Media fetch queue cleared');
 
 let databasePromise: Promise<IDBDatabase> | undefined;
 const mediaCacheRequestMap = new Map<string, Promise<Blob | undefined>>();
 const mediaCacheFailureMap = new Map<string, number>();
+const mediaFetchLimiter = createAsyncConcurrencyLimiter(MEDIA_FETCH_CONCURRENCY);
 const MEDIA_CACHE_FAILURE_TTL = 60_000;
 let cacheInvalidationRevision = 0;
 
@@ -179,6 +186,7 @@ const invalidateInMemoryMediaCache = (): void => {
   cacheInvalidationRevision += 1;
   mediaCacheRequestMap.clear();
   mediaCacheFailureMap.clear();
+  mediaFetchLimiter.clear(MEDIA_FETCH_QUEUE_CLEARED_ERROR);
 };
 
 /**
@@ -334,7 +342,7 @@ export const cacheMediaResourceFromUrl = async (
  */
 export const fetchMediaResourceBlob = async (url: string): Promise<Blob | undefined> => {
   try {
-    const fetchedMedia = await fetchMediaBlob(url);
+    const fetchedMedia = await mediaFetchLimiter.run(() => fetchMediaBlob(url));
 
     return fetchedMedia.blob.size > 0 ? fetchedMedia.blob : undefined;
   } catch {
@@ -351,7 +359,7 @@ const fetchAndWriteMediaCache = async (
   startedRevision: number,
 ): Promise<Blob | undefined> => {
   try {
-    const fetchedMedia = await fetchMediaBlob(params.url);
+    const fetchedMedia = await mediaFetchLimiter.run(() => fetchMediaBlob(params.url));
     const blob = fetchedMedia.blob;
 
     if (blob.size <= 0) {
@@ -394,8 +402,10 @@ const fetchAndWriteMediaCache = async (
     });
     mediaCacheFailureMap.delete(key);
     return blob;
-  } catch {
-    mediaCacheFailureMap.set(key, Date.now());
+  } catch (error) {
+    if (error !== MEDIA_FETCH_QUEUE_CLEARED_ERROR) {
+      mediaCacheFailureMap.set(key, Date.now());
+    }
     // Media endpoints may be displayable by <img>/<video> but unavailable to fetch because of CORS.
     return undefined;
   }
@@ -480,6 +490,7 @@ export const listLocalCacheFolders = async (
         size: 0,
         thumbnailCount: 0,
         updatedAt: 0,
+        videoPosterCount: 0,
       };
 
       const resourceKind = normalizeCacheResourceKind(record);
@@ -491,6 +502,7 @@ export const listLocalCacheFolders = async (
       current.originalImageCount += resourceKind === 'image-preview' ? 1 : 0;
       current.originalVideoCount += resourceKind === 'video-preview' ? 1 : 0;
       current.thumbnailCount += resourceKind === 'file-thumbnail' ? 1 : 0;
+      current.videoPosterCount += resourceKind === 'video-poster' ? 1 : 0;
       current.itemCount += 1;
       current.size += record.size;
       current.updatedAt = Math.max(current.updatedAt, record.updatedAt);
@@ -899,6 +911,10 @@ const normalizeCacheResourceKind = (record: LocalCacheResourceRecord): LocalCach
     return 'video-preview';
   }
 
+  if (record.key.includes('::video-poster::')) {
+    return 'video-poster';
+  }
+
   return 'directory';
 };
 
@@ -918,7 +934,14 @@ const inferCacheResourceKindFromShape = (
 
   if (
     record.fileId &&
-    (variant === 'h220' || variant === 'poster' || url.includes('/gateway/h220/') || url.includes('/gateway/poster/'))
+    (variant === 'poster' || url.includes('/gateway/poster/'))
+  ) {
+    return 'video-poster';
+  }
+
+  if (
+    record.fileId &&
+    (variant === 'h220' || url.includes('/gateway/h220/'))
   ) {
     return 'file-thumbnail';
   }
@@ -940,6 +963,7 @@ const isLocalCacheResourceKind = (value: unknown): value is LocalCacheResourceKi
     value === 'file-thumbnail' ||
     value === 'file-hd-thumbnail' ||
     value === 'image-preview' ||
+    value === 'video-poster' ||
     value === 'video-preview'
   );
 };
@@ -951,6 +975,7 @@ const getLocalCacheResourceKindLabel = (kind: LocalCacheResourceKind): string =>
     'file-thumbnail': '文件缩略图',
     'folder-cover': '文件夹封面图',
     'image-preview': '查看原图',
+    'video-poster': '视频海报',
     'video-preview': '查看原视频',
   };
 

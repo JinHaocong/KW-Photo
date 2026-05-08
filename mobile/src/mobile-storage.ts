@@ -11,6 +11,7 @@ export type MobileFolderSortDirection = 'ASC' | 'DESC';
 export type MobileFolderSortField = 'tokenAt' | 'mtime' | 'fileName' | 'size' | 'fileType';
 export type MobileFolderViewMode = 'grid' | 'list';
 export type MobileAdminTab = AdminTab;
+export type MobileExternalVideoPlayer = 'none' | 'infuse';
 export type MobileServerAddressRole = 'primary' | 'backup';
 export type MobileThemeName =
   | 'blue'
@@ -32,6 +33,7 @@ export interface MobilePreferences {
   activeTheme?: MobileThemeName;
   backupServerUrl?: string;
   currentFolderId?: number;
+  externalVideoPlayer?: MobileExternalVideoPlayer;
   folderCardSize?: MobileFolderCardSize;
   folderSortDirection?: MobileFolderSortDirection;
   folderSortField?: MobileFolderSortField;
@@ -48,16 +50,18 @@ export interface MobilePreferences {
 }
 
 const SESSION_KEY = 'kwphoto.mobile.session.v1';
+const SESSION_FALLBACK_KEY = 'kwphoto.mobile.session.fallback.v1';
 const PREFERENCES_KEY = 'kwphoto.mobile.preferences.v1';
 
 export const DEFAULT_MOBILE_SERVER_URL = 'https://d.mtmt.tech';
+export const DEFAULT_MOBILE_EXTERNAL_VIDEO_PLAYER: MobileExternalVideoPlayer = 'none';
 export const MOBILE_ADMIN_TABS: MobileAdminTab[] = [...ADMIN_TAB_KEYS];
 
 /**
  * Reads the persisted authenticated mobile session from secure storage.
  */
 export const readMobileSession = async (): Promise<MobileSession | undefined> => {
-  const rawValue = await SecureStore.getItemAsync(SESSION_KEY);
+  const rawValue = await readSecureSessionValue();
 
   return parseJson<MobileSession>(rawValue);
 };
@@ -66,14 +70,68 @@ export const readMobileSession = async (): Promise<MobileSession | undefined> =>
  * Persists the authenticated mobile session in secure storage.
  */
 export const writeMobileSession = async (session: MobileSession): Promise<void> => {
-  await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session));
+  await writeSecureSessionValue(JSON.stringify(session));
 };
 
 /**
  * Clears only the authenticated session while preserving non-sensitive preferences.
  */
 export const clearMobileSession = async (): Promise<void> => {
-  await SecureStore.deleteItemAsync(SESSION_KEY);
+  await deleteSecureSessionValue();
+};
+
+/**
+ * Reads session data from SecureStore and falls back when the native module is unavailable.
+ */
+const readSecureSessionValue = async (): Promise<string | null> => {
+  if (await canUseSecureStore()) {
+    try {
+      return await SecureStore.getItemAsync(SESSION_KEY);
+    } catch {
+      return AsyncStorage.getItem(SESSION_FALLBACK_KEY);
+    }
+  }
+
+  return AsyncStorage.getItem(SESSION_FALLBACK_KEY);
+};
+
+/**
+ * Stores session data using SecureStore when possible, otherwise keeps dev clients usable.
+ */
+const writeSecureSessionValue = async (value: string): Promise<void> => {
+  if (await canUseSecureStore()) {
+    try {
+      await SecureStore.setItemAsync(SESSION_KEY, value);
+      await AsyncStorage.removeItem(SESSION_FALLBACK_KEY);
+      return;
+    } catch {
+      // Fall through to AsyncStorage for dev clients without the native module.
+    }
+  }
+
+  await AsyncStorage.setItem(SESSION_FALLBACK_KEY, value);
+};
+
+/**
+ * Deletes both SecureStore and fallback session values without blocking logout.
+ */
+const deleteSecureSessionValue = async (): Promise<void> => {
+  if (await canUseSecureStore()) {
+    await SecureStore.deleteItemAsync(SESSION_KEY).catch(() => undefined);
+  }
+
+  await AsyncStorage.removeItem(SESSION_FALLBACK_KEY);
+};
+
+/**
+ * Detects whether expo-secure-store is backed by native methods in the current runtime.
+ */
+const canUseSecureStore = async (): Promise<boolean> => {
+  try {
+    return await SecureStore.isAvailableAsync();
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -113,6 +171,7 @@ export const resetMobileBehaviorPreferences = async (): Promise<MobilePreference
   const nextPreferences: MobilePreferences = {
     activeTheme: current.activeTheme,
     backupServerUrl: current.backupServerUrl,
+    externalVideoPlayer: current.externalVideoPlayer,
     folderCardSize: current.folderCardSize,
     folderSortDirection: current.folderSortDirection,
     folderSortField: current.folderSortField,

@@ -45,6 +45,17 @@ export const formatCardSize = (size?: MobilePreferences['folderCardSize']): stri
   return '中';
 };
 
+/**
+ * Formats the selected external video player for settings summaries.
+ */
+export const formatExternalVideoPlayer = (player?: MobilePreferences['externalVideoPlayer']): string => {
+  if (player === 'infuse') {
+    return 'Infuse';
+  }
+
+  return '关闭';
+};
+
 export const formatAdminTab = (tab?: MobilePreferences['activeAdminTab']): string => {
   if (!isAdminTab(tab)) {
     return '未记录';

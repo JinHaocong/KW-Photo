@@ -124,7 +124,7 @@ const isSyntheticSortFileGroup = (group: FolderFileGroup): boolean => {
 };
 
 export const createFileThumbnailKey = (file: FolderFileSummary): string => {
-  return `file:${file.id || file.md5 || file.name}:${file.md5}:${isVideoFile(file) ? 'poster' : 'h220'}`;
+  return `file:${file.id || file.md5 || file.name}:${file.md5}:h220`;
 };
 
 export const chunkFileGridRows = (files: FolderFileSummary[], columnCount: number): FolderFileSummary[][] => {
@@ -563,6 +563,31 @@ export const getVideoPlaybackUrl = (
   }
 
   return transcodeUrl ?? directUrl;
+};
+
+export const INFUSE_URL_SCHEME = 'infuse://';
+
+const INFUSE_PLAYBACK_URL = 'infuse://x-callback-url/play';
+
+/**
+ * Builds the Infuse x-callback playback URL for one remote video.
+ */
+export const createInfusePlaybackUrl = ({
+  filename,
+  sourceUrl,
+}: {
+  filename?: string;
+  sourceUrl: string;
+}): string => {
+  const params = new URLSearchParams();
+
+  params.set('url', sourceUrl);
+
+  if (filename?.trim()) {
+    params.set('filename', filename.trim());
+  }
+
+  return `${INFUSE_PLAYBACK_URL}?${params.toString()}`;
 };
 
 export const getPreviewActionLabel = (
