@@ -3,11 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   formatCacheSize,
-  listLocalCacheFolders,
+  readLocalCacheStats,
   readLocalCacheStorageInfo,
   subscribeLocalCacheChanges,
 } from '../../shared/local-cache';
-import type { LocalCacheFolderSummary, LocalCacheStorageInfo } from '../../shared/local-cache';
+import type { LocalCacheStats, LocalCacheStorageInfo } from '../../shared/local-cache';
 import type { ApiInfo, AuthTokens, CurrentUser, UploadTask } from '../../shared/types';
 import type { AdminTab } from './admin-types';
 import { getJwtExpiryLabel, getRuntimeLabel, getUploadTaskStats } from './admin-utils';
@@ -15,7 +15,6 @@ import { getJwtExpiryLabel, getRuntimeLabel, getUploadTaskStats } from './admin-
 interface AdminOverviewPanelProps {
   apiInfo?: ApiInfo;
   cacheEnabled: boolean;
-  cacheScope: string;
   onOpenTab: (tab: AdminTab) => void;
   serverUrl: string;
   tokens?: AuthTokens;
@@ -23,46 +22,43 @@ interface AdminOverviewPanelProps {
   user?: CurrentUser;
 }
 
+const EMPTY_CACHE_STATS: LocalCacheStats = {
+  coverCount: 0,
+  directoryCount: 0,
+  hdThumbnailCount: 0,
+  mediaCount: 0,
+  originalImageCount: 0,
+  originalVideoCount: 0,
+  thumbnailCount: 0,
+  totalCount: 0,
+  totalSize: 0,
+  unusedCount: 0,
+  unusedSize: 0,
+  usefulCount: 0,
+  usefulSize: 0,
+  videoPosterCount: 0,
+};
+
 /**
  * Renders the admin landing dashboard from currently available real app state.
  */
 export const AdminOverviewPanel = ({
   apiInfo,
   cacheEnabled,
-  cacheScope,
   onOpenTab,
   serverUrl,
   tokens,
   uploadTasks,
   user,
 }: AdminOverviewPanelProps) => {
-  const [cacheFolders, setCacheFolders] = useState<LocalCacheFolderSummary[]>([]);
+  const [cacheStats, setCacheStats] = useState<LocalCacheStats>(EMPTY_CACHE_STATS);
   const [storageInfo, setStorageInfo] = useState<LocalCacheStorageInfo>();
   const uploadStats = useMemo(() => getUploadTaskStats(uploadTasks), [uploadTasks]);
-  const cacheSize = useMemo(
-    () => cacheFolders.reduce((sum, folder) => sum + folder.size, 0),
-    [cacheFolders],
-  );
-  const cachedMediaCount = useMemo(
-    () =>
-      cacheFolders.reduce(
-        (sum, folder) =>
-          sum +
-          folder.coverCount +
-          folder.thumbnailCount +
-          folder.videoPosterCount +
-          folder.hdThumbnailCount +
-          folder.originalImageCount +
-          folder.originalVideoCount,
-        0,
-      ),
-    [cacheFolders],
-  );
 
   const refreshCacheSummary = useCallback(async (): Promise<void> => {
-    setCacheFolders(await listLocalCacheFolders(cacheScope).catch(() => []));
+    setCacheStats(await readLocalCacheStats().catch(() => EMPTY_CACHE_STATS));
     setStorageInfo(await readLocalCacheStorageInfo());
-  }, [cacheScope]);
+  }, []);
 
   useEffect(() => {
     void refreshCacheSummary();
@@ -109,8 +105,8 @@ export const AdminOverviewPanel = ({
         <article className="admin-metric-card">
           <Database size={18} />
           <span>已缓存媒体</span>
-          <strong>{cachedMediaCount}</strong>
-          <em>{cacheFolders.length} 个文件夹，{formatCacheSize(cacheSize)}</em>
+          <strong>{cacheStats.mediaCount}</strong>
+          <em>{cacheStats.usefulCount} 项可用，{formatCacheSize(cacheStats.totalSize)}</em>
         </article>
         <article className="admin-metric-card">
           <HardDrive size={18} />

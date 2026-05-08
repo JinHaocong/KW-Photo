@@ -15,8 +15,8 @@ import {
 } from '../../mobile-theme';
 import {
   clearAllMobileLocalCache,
-  clearMobileLocalCache,
-  createMobileLocalCacheScope,
+  clearUnusedMobileLocalCache,
+  clearUsefulMobileLocalCache,
   readMobileCacheStats,
 } from '../../mobile-local-cache';
 import type { MobileCacheStats } from '../../mobile-local-cache';
@@ -61,6 +61,12 @@ const EMPTY_CACHE_STATS: MobileCacheStats = {
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
+  totalCount: 0,
+  totalSize: 0,
+  unusedCount: 0,
+  unusedSize: 0,
+  usefulCount: 0,
+  usefulSize: 0,
   videoPosterCount: 0,
 };
 
@@ -99,22 +105,12 @@ export const useMobileSettingsController = ({
   );
   const menuMinCount = getMobileMenuMinCount(session.user.isAdmin);
   const activeThemeToken = MOBILE_THEME_TOKENS[activeTheme] ?? MOBILE_THEME_TOKENS[DEFAULT_MOBILE_THEME];
-  const cacheScope = useMemo(
-    () =>
-      createMobileLocalCacheScope({
-        serverUrl: session.serverUrl,
-        userId: session.user.id,
-        username: session.user.username,
-      }),
-    [session.serverUrl, session.user.id, session.user.username],
-  );
-
   const loadSettings = useCallback(async (): Promise<void> => {
     setLoading(true);
 
     try {
       const [nextStats, nextPreferences] = await Promise.all([
-        readMobileCacheStats(cacheScope),
+        readMobileCacheStats(),
         readMobilePreferences(),
       ]);
 
@@ -128,7 +124,7 @@ export const useMobileSettingsController = ({
     } finally {
       setLoading(false);
     }
-  }, [cacheScope, session.serverUrl]);
+  }, [session.serverUrl]);
 
   useEffect(() => {
     void loadSettings();
@@ -294,11 +290,20 @@ export const useMobileSettingsController = ({
   };
 
   /**
-   * Clears cached resources for the current account scope and refreshes the summary.
+   * Clears indexed cache records that are still reusable by mobile pages.
    */
-  const handleClearCache = async (): Promise<void> => {
-    await clearMobileLocalCache(cacheScope);
-    setMessage('本账号缓存已清理');
+  const handleClearUsefulCache = async (): Promise<void> => {
+    await clearUsefulMobileLocalCache();
+    setMessage('可用缓存已清理');
+    await loadSettings();
+  };
+
+  /**
+   * Clears orphaned files and legacy cache payloads that are no longer reachable.
+   */
+  const handleClearUnusedCache = async (): Promise<void> => {
+    await clearUnusedMobileLocalCache();
+    setMessage('残留缓存已清理');
     await loadSettings();
   };
 
@@ -307,7 +312,7 @@ export const useMobileSettingsController = ({
    */
   const handleClearAllCache = async (): Promise<void> => {
     await clearAllMobileLocalCache();
-    setMessage('全部移动端缓存已清理');
+    setMessage('全部缓存已清理');
     await loadSettings();
   };
 
@@ -385,10 +390,20 @@ export const useMobileSettingsController = ({
   /**
    * Confirms cache deletion so accidental taps do not remove offline first-paint data.
    */
-  const confirmClearCache = (): void => {
-    Alert.alert('清理本地缓存', '将清除当前账号的目录快照、封面图、缩略图和预览媒体，不影响服务端文件。', [
+  const confirmClearUsefulCache = (): void => {
+    Alert.alert('清理可用缓存', '将清除仍可被页面命中的目录快照、封面图、缩略图和预览媒体，不影响服务端文件。', [
       { text: '取消', style: 'cancel' },
-      { text: '清理', style: 'destructive', onPress: () => void handleClearCache() },
+      { text: '清理', style: 'destructive', onPress: () => void handleClearUsefulCache() },
+    ]);
+  };
+
+  /**
+   * Confirms orphan and legacy cache cleanup before removing unreachable payloads.
+   */
+  const confirmClearUnusedCache = (): void => {
+    Alert.alert('清理残留缓存', '将清除索引外文件、旧版本目录缓存和失效记录，不会主动删除当前可命中的缓存。', [
+      { text: '取消', style: 'cancel' },
+      { text: '清理残留', style: 'destructive', onPress: () => void handleClearUnusedCache() },
     ]);
   };
 
@@ -396,7 +411,7 @@ export const useMobileSettingsController = ({
    * Confirms deleting every account cache and the physical mobile cache folder.
    */
   const confirmClearAllCache = (): void => {
-    Alert.alert('清理全部移动端缓存', '将清除所有账号、所有服务端下的目录快照、封面图、缩略图、预览媒体，并删除移动端缓存目录。不影响服务端文件。', [
+    Alert.alert('清理全部缓存', '将清除所有可用缓存和残留缓存，并删除移动端缓存目录。不影响服务端文件。', [
       { text: '取消', style: 'cancel' },
       { text: '全部清理', style: 'destructive', onPress: () => void handleClearAllCache() },
     ]);
@@ -409,7 +424,8 @@ export const useMobileSettingsController = ({
     backupUrl,
     cacheStats,
     confirmClearAllCache,
-    confirmClearCache,
+    confirmClearUnusedCache,
+    confirmClearUsefulCache,
     confirmResetBehavior,
     handleChangeExternalVideoPlayer,
     handleChangeTheme,

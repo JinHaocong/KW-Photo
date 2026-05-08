@@ -31,6 +31,12 @@ export interface MobileCacheStats {
   originalImageCount: number;
   originalVideoCount: number;
   thumbnailCount: number;
+  totalCount: number;
+  totalSize: number;
+  unusedCount: number;
+  unusedSize: number;
+  usefulCount: number;
+  usefulSize: number;
   videoPosterCount: number;
 }
 
@@ -78,6 +84,21 @@ interface MobileLocalCacheRecordMeta {
   updatedAt: number;
   url?: string;
   variant?: string;
+}
+
+interface CachePayloadSize {
+  exists: boolean;
+  size: number;
+}
+
+interface MobileCachePayloadSnapshot {
+  referencedDataKeys: Set<string>;
+  referencedFileUris: Set<string>;
+  staleRecordKeys: Set<string>;
+  usefulRecords: MobileLocalCacheRecordMeta[];
+  usefulSizeByKey: Map<string, number>;
+  unusedCount: number;
+  unusedSize: number;
 }
 
 interface ReadCachedMobileDirectoryParams {
@@ -285,14 +306,19 @@ export const cacheMobileMediaResourceFromUrl = async (
 };
 
 /**
- * Reads the current scope cache summary for the settings page.
+ * Reads useful indexed cache plus global orphaned payloads for management screens.
  */
 export const readMobileCacheStats = async (scope?: string): Promise<MobileCacheStats> => {
-  const records = (await readCacheRecordMetas()).filter((record) => !scope || record.scope === scope);
+  const records = await readCacheRecordMetas();
+  const payloadSnapshot = await inspectMobileCachePayloads(records);
+  const usefulRecords = payloadSnapshot.usefulRecords.filter((record) => !scope || record.scope === scope);
 
-  return records.reduce<MobileCacheStats>(
+  const stats = usefulRecords.reduce<MobileCacheStats>(
     (summary, record) => {
-      summary.approximateSize += record.size;
+      const payloadSize = payloadSnapshot.usefulSizeByKey.get(record.key) ?? record.size;
+
+      summary.usefulCount += 1;
+      summary.usefulSize += payloadSize;
       summary.latestCachedAt = Math.max(summary.latestCachedAt ?? 0, record.updatedAt);
 
       if (record.kind === 'directory') {
@@ -306,6 +332,17 @@ export const readMobileCacheStats = async (scope?: string): Promise<MobileCacheS
     },
     createEmptyCacheStats(),
   );
+
+  if (!scope) {
+    stats.unusedCount = payloadSnapshot.unusedCount;
+    stats.unusedSize = payloadSnapshot.unusedSize;
+  }
+
+  stats.totalCount = stats.usefulCount + stats.unusedCount;
+  stats.totalSize = stats.usefulSize + stats.unusedSize;
+  stats.approximateSize = stats.totalSize;
+
+  return stats;
 };
 
 /**
@@ -384,6 +421,46 @@ export const clearMobileLocalCache = async (scope?: string): Promise<void> => {
 
   await clearLegacyDirectoryCache();
   notifyMobileCacheChanged({ reason: scope ? 'clear-scope' : 'clear-all', scope });
+};
+
+/**
+ * Clears every indexed cache record while keeping orphan cleanup as a separate user action.
+ */
+export const clearUsefulMobileLocalCache = async (): Promise<void> => {
+  invalidateMobileCacheRequests();
+
+  await enqueueCacheIndexMutation(async () => {
+    const records = await readCacheRecordMetasRaw();
+
+    await Promise.all(records.map(deleteCachePayload));
+    await writeCacheRecordMetasRaw([]);
+  });
+
+  notifyMobileCacheChanged({ reason: 'clear-all' });
+};
+
+/**
+ * Clears payloads that are no longer reachable from the cache index.
+ */
+export const clearUnusedMobileLocalCache = async (): Promise<void> => {
+  invalidateMobileCacheRequests();
+
+  await enqueueCacheIndexMutation(async () => {
+    const records = await readCacheRecordMetasRaw();
+    const payloadSnapshot = await inspectMobileCachePayloads(records);
+    const staleRecordKeys = payloadSnapshot.staleRecordKeys;
+
+    await Promise.all([
+      clearUnusedMobileCacheDataKeys(payloadSnapshot.referencedDataKeys),
+      deleteUnusedMobileCacheFiles(payloadSnapshot.referencedFileUris),
+    ]);
+
+    if (staleRecordKeys.size > 0) {
+      await writeCacheRecordMetasRaw(records.filter((record) => !staleRecordKeys.has(record.key)));
+    }
+  });
+
+  notifyMobileCacheChanged({ reason: 'clear-all' });
 };
 
 /**
@@ -479,6 +556,12 @@ const createEmptyCacheStats = (): MobileCacheStats => ({
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
+  totalCount: 0,
+  totalSize: 0,
+  unusedCount: 0,
+  unusedSize: 0,
+  usefulCount: 0,
+  usefulSize: 0,
   videoPosterCount: 0,
 });
 
@@ -518,6 +601,76 @@ const readCacheRecordMetasRaw = async (): Promise<MobileLocalCacheRecordMeta[]> 
 const writeCacheRecordMetasRaw = async (records: MobileLocalCacheRecordMeta[]): Promise<void> => {
   await AsyncStorage.setItem(MOBILE_CACHE_INDEX_KEY, JSON.stringify(records));
   notifyMobileCacheChanged();
+};
+
+const inspectMobileCachePayloads = async (
+  records: MobileLocalCacheRecordMeta[],
+): Promise<MobileCachePayloadSnapshot> => {
+  const referencedDataKeys = new Set<string>();
+  const referencedFileUris = new Set<string>();
+  const staleRecordKeys = new Set<string>();
+  const usefulRecords: MobileLocalCacheRecordMeta[] = [];
+  const usefulSizeByKey = new Map<string, number>();
+
+  for (const record of records) {
+    if (record.directoryStorageKey) {
+      referencedDataKeys.add(record.directoryStorageKey);
+    }
+
+    if (record.fileUri) {
+      referencedFileUris.add(record.fileUri);
+    }
+
+    const payloadSize = await readCacheRecordPayloadSize(record);
+
+    if (payloadSize.exists) {
+      usefulRecords.push(record);
+      usefulSizeByKey.set(record.key, payloadSize.size);
+    } else {
+      staleRecordKeys.add(record.key);
+    }
+  }
+
+  const [unusedDataStats, unusedFileStats] = await Promise.all([
+    readUnusedMobileCacheDataStats(referencedDataKeys),
+    readUnusedMobileCacheFileStats(referencedFileUris),
+  ]);
+
+  return {
+    referencedDataKeys,
+    referencedFileUris,
+    staleRecordKeys,
+    usefulRecords,
+    usefulSizeByKey,
+    unusedCount: staleRecordKeys.size + unusedDataStats.count + unusedFileStats.count,
+    unusedSize: unusedDataStats.size + unusedFileStats.size,
+  };
+};
+
+const readCacheRecordPayloadSize = async (record: MobileLocalCacheRecordMeta): Promise<CachePayloadSize> => {
+  if (record.directoryStorageKey) {
+    const value = await AsyncStorage.getItem(record.directoryStorageKey);
+
+    return {
+      exists: value !== null,
+      size: value?.length ?? 0,
+    };
+  }
+
+  if (record.fileUri) {
+    try {
+      const file = new File(record.fileUri);
+
+      return {
+        exists: file.exists,
+        size: file.exists ? getFileSize(file) : 0,
+      };
+    } catch {
+      return { exists: false, size: 0 };
+    }
+  }
+
+  return { exists: false, size: 0 };
 };
 
 const enqueueCacheIndexMutation = <TResult,>(mutation: () => Promise<TResult>): Promise<TResult> => {
@@ -595,10 +748,127 @@ const clearAllMobileCacheDataKeys = async (): Promise<void> => {
 };
 
 const clearLegacyDirectoryCache = async (): Promise<void> => {
-  const legacyKeys = parseJson<string[]>(await AsyncStorage.getItem(LEGACY_DIRECTORY_CACHE_INDEX_KEY)) ?? [];
-  const safeLegacyKeys = legacyKeys.filter((key) => key.startsWith(LEGACY_DIRECTORY_CACHE_PREFIX));
+  const legacyKeys = await getLegacyDirectoryCacheKeys();
 
-  await AsyncStorage.multiRemove([...safeLegacyKeys, LEGACY_DIRECTORY_CACHE_INDEX_KEY]);
+  if (legacyKeys.length > 0) {
+    await AsyncStorage.multiRemove(legacyKeys);
+  }
+};
+
+const clearUnusedMobileCacheDataKeys = async (referencedDataKeys: Set<string>): Promise<void> => {
+  const keys = await AsyncStorage.getAllKeys();
+  const unusedDataKeys = keys.filter((key) => {
+    return key.startsWith(MOBILE_CACHE_DATA_PREFIX) && !referencedDataKeys.has(key);
+  });
+  const keysToRemove = uniqueStrings([
+    ...unusedDataKeys,
+    ...(await getLegacyDirectoryCacheKeys(keys)),
+  ]);
+
+  if (keysToRemove.length > 0) {
+    await AsyncStorage.multiRemove(keysToRemove);
+  }
+};
+
+const readUnusedMobileCacheDataStats = async (
+  referencedDataKeys: Set<string>,
+): Promise<{ count: number; size: number }> => {
+  const keys = await AsyncStorage.getAllKeys();
+  const unusedDataKeys = keys.filter((key) => {
+    return key.startsWith(MOBILE_CACHE_DATA_PREFIX) && !referencedDataKeys.has(key);
+  });
+  const legacyKeys = await getLegacyDirectoryCacheKeys(keys);
+
+  return readAsyncStorageKeysStats(uniqueStrings([...unusedDataKeys, ...legacyKeys]));
+};
+
+const getLegacyDirectoryCacheKeys = async (allKeys?: readonly string[]): Promise<string[]> => {
+  const keys = allKeys ?? await AsyncStorage.getAllKeys();
+  const legacyIndexKeys = parseJson<string[]>(await AsyncStorage.getItem(LEGACY_DIRECTORY_CACHE_INDEX_KEY)) ?? [];
+  const legacyDataKeys = keys.filter((key) => key.startsWith(LEGACY_DIRECTORY_CACHE_PREFIX));
+  const safeLegacyIndexKeys = legacyIndexKeys.filter((key) => key.startsWith(LEGACY_DIRECTORY_CACHE_PREFIX));
+
+  return uniqueStrings([
+    ...legacyDataKeys,
+    ...safeLegacyIndexKeys,
+    LEGACY_DIRECTORY_CACHE_INDEX_KEY,
+  ]);
+};
+
+const readAsyncStorageKeysStats = async (keys: string[]): Promise<{ count: number; size: number }> => {
+  if (keys.length === 0) {
+    return { count: 0, size: 0 };
+  }
+
+  const entries = await AsyncStorage.multiGet(keys);
+
+  return entries.reduce(
+    (summary, [, value]) => {
+      if (value === null) {
+        return summary;
+      }
+
+      summary.count += 1;
+      summary.size += value.length;
+      return summary;
+    },
+    { count: 0, size: 0 },
+  );
+};
+
+const readUnusedMobileCacheFileStats = (
+  referencedFileUris: Set<string>,
+): { count: number; size: number } => {
+  return listMobileCacheFiles()
+    .filter((file) => !referencedFileUris.has(file.uri))
+    .reduce(
+      (summary, file) => {
+        summary.count += 1;
+        summary.size += getFileSize(file);
+        return summary;
+      },
+      { count: 0, size: 0 },
+    );
+};
+
+const deleteUnusedMobileCacheFiles = (referencedFileUris: Set<string>): void => {
+  listMobileCacheFiles().forEach((file) => {
+    if (!referencedFileUris.has(file.uri)) {
+      deleteFileUri(file.uri);
+    }
+  });
+};
+
+const listMobileCacheFiles = (): File[] => {
+  try {
+    const directory = new Directory(Paths.cache, MOBILE_CACHE_DIRECTORY_NAME);
+
+    if (!directory.exists) {
+      return [];
+    }
+
+    return listDirectoryFiles(directory);
+  } catch {
+    return [];
+  }
+};
+
+const listDirectoryFiles = (directory: Directory): File[] => {
+  try {
+    return directory.list().flatMap((entry) => {
+      if (entry instanceof File) {
+        return [entry];
+      }
+
+      return listDirectoryFiles(entry);
+    });
+  } catch {
+    return [];
+  }
+};
+
+const uniqueStrings = (values: string[]): string[] => {
+  return Array.from(new Set(values));
 };
 
 const ensureMobileCacheDirectory = (): Directory => {

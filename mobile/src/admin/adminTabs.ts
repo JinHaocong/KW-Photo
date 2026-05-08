@@ -26,7 +26,7 @@ export const getAdminTabMeta = (tab: AdminTab, summary: AdminTabMetaSummary): st
   }
 
   if (tab === 'cache') {
-    return formatFileSize(summary.cacheStats.approximateSize);
+    return formatFileSize(summary.cacheStats.totalSize);
   }
 
   if (tab === 'system') {

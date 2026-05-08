@@ -26,12 +26,6 @@ import type {
   UploadTarget,
 } from '../shared/types';
 
-export const STATUS_COPY: Record<FolderSummary['status'], string> = {
-  empty: '空文件夹',
-  ready: '可浏览',
-  scanning: '扫描中',
-};
-
 export const VIDEO_TYPES = new Set(['MP4', 'MOV', 'WEBM', 'M4V', 'MKV', 'AVI', 'FLV', 'MTS', 'M2TS']);
 
 const LONG_PRESS_DELAY_MS = 520;
@@ -124,6 +118,7 @@ export const DirectoryContent = ({
                   cacheEnabled={cacheEnabled}
                   cacheFolder={cacheFolder}
                   folder={folder}
+                  folderCardSize={folderCardSize}
                   key={folder.id || folder.path}
                   onOpenFolder={onOpenFolder}
                   onOpenFolderUpload={onOpenFolderUpload}
@@ -134,6 +129,7 @@ export const DirectoryContent = ({
                   selectionMode={selectionMode}
                   serverUrl={serverUrl}
                   showFolderCovers={showFolderCovers}
+                  viewMode={viewMode}
                 />
               ))}
             </div>
@@ -167,6 +163,7 @@ const FolderCard = ({
   cacheEnabled,
   cacheFolder,
   folder,
+  folderCardSize,
   onOpenFolder,
   onOpenFolderUpload,
   onRenameFolder,
@@ -176,11 +173,13 @@ const FolderCard = ({
   selectionMode,
   serverUrl,
   showFolderCovers,
+  viewMode,
 }: {
   authCode?: string;
   cacheEnabled: boolean;
   cacheFolder: LocalCacheFolderRef;
   folder: FolderSummary;
+  folderCardSize: FolderCardSize;
   onOpenFolder: (folder: FolderSummary) => void;
   onOpenFolderUpload: (target: UploadTarget) => void;
   onRenameFolder: (folder: FolderSummary) => void;
@@ -190,6 +189,7 @@ const FolderCard = ({
   selectionMode: boolean;
   serverUrl: string;
   showFolderCovers: boolean;
+  viewMode: 'grid' | 'list';
 }) => {
   const [actionsOpen, setActionsOpen] = useState(false);
   const cardRef = useRef<HTMLElement | null>(null);
@@ -229,6 +229,7 @@ const FolderCard = ({
         .filter((item): item is { md5: string; url: string } => Boolean(item.url))
     : [];
   const contentCount = folder.childCount + folder.fileCount + folder.trashCount;
+  const showFolderPath = viewMode === 'list' || folderCardSize !== 'small';
 
   const handleOpenUpload = (): void => {
     setActionsOpen(false);
@@ -385,12 +386,10 @@ const FolderCard = ({
       <div className="folder-card__body">
         <div>
           <h3 title={folder.name}>{folder.name}</h3>
-          <p title={folder.path}>{folder.path}</p>
+          {showFolderPath ? <p title={folder.path}>{folder.path}</p> : null}
         </div>
         <div className="folder-card__status-line">
-          <span className={folder.trashCount > 0 || folder.status === 'scanning' ? 'tag is-theme' : 'tag'}>
-            {folder.trashCount > 0 ? `${folder.trashCount} 回收` : STATUS_COPY[folder.status]}
-          </span>
+          {folder.trashCount > 0 ? <span className="tag is-theme">{folder.trashCount} 回收</span> : null}
           <div
             className="folder-card__mobile-actions"
             onMouseDown={stopFolderActionEvent}

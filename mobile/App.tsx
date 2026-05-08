@@ -1,10 +1,14 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import {
   ActivityIndicator,
+  AppState,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,6 +17,7 @@ import {
   Text,
   TextInput,
   View,
+  type AppStateStatus,
 } from 'react-native';
 
 import type { ApiInfo, AuthTokens } from '@kwphoto/core';
@@ -48,6 +53,8 @@ import { MobileWorkspace } from './src/MobileWorkspace';
 const DEFAULT_THEME = MOBILE_THEME_TOKENS[DEFAULT_MOBILE_THEME];
 const queryClient = new QueryClient();
 
+type StartupPhase = 'reading' | 'validating' | 'ready';
+
 /**
  * Mobile entry screen for the Expo app.
  * It restores the mobile session and reuses shared MT Photos APIs for native screens.
@@ -59,11 +66,14 @@ export default function App() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [otp, setOtp] = useState('');
   const [apiInfo, setApiInfo] = useState<ApiInfo>();
-  const [hydrating, setHydrating] = useState(true);
+  const [startupPhase, setStartupPhase] = useState<StartupPhase>('reading');
   const [session, setSession] = useState<MobileSession>();
   const [loadingAction, setLoadingAction] = useState<'connect' | 'login'>();
   const [message, setMessage] = useState('');
   const [activeTheme, setActiveTheme] = useState<MobileThemeName>(DEFAULT_MOBILE_THEME);
+  const [privacyScreenVisible, setPrivacyScreenVisible] = useState(AppState.currentState !== 'active');
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const foregroundValidationRef = useRef(false);
   const normalizedServerUrl = useMemo(() => normalizeServerUrl(serverUrl), [serverUrl]);
   const activeThemeToken = useMemo(
     () => MOBILE_THEME_TOKENS[activeTheme] ?? DEFAULT_THEME,
@@ -75,7 +85,7 @@ export default function App() {
     let mounted = true;
 
     /**
-     * Restores local session data first, then validates network session in the background.
+     * Restores local session data, then validates the saved server session before entering workspace.
      */
     const hydrateMobileState = async (): Promise<void> => {
       try {
@@ -96,53 +106,42 @@ export default function App() {
 
         if (storedSession?.tokens.refreshToken) {
           setApiInfo(storedSession.apiInfo);
-          setSession(storedSession);
           setServerUrl(storedSession.serverUrl);
-          setHydrating(false);
+          setStartupPhase('validating');
 
-          void validateStoredSessionInBackground(storedSession, preferences, () => mounted);
+          try {
+            const nextSession = await hydrateAuthenticatedMobileSession(storedSession, preferences);
+
+            if (!mounted) {
+              return;
+            }
+
+            setApiInfo(nextSession.apiInfo);
+            setSession(nextSession);
+            setServerUrl(nextSession.serverUrl);
+            void writeMobileSession(nextSession);
+            void mergeMobilePreferences({ serverUrl: nextSession.serverUrl });
+          } catch (error) {
+            await clearMobileSession();
+
+            if (!mounted) {
+              return;
+            }
+
+            setApiInfo(undefined);
+            setSession(undefined);
+            setServerUrl(getInitialMobileServerUrl(preferences, storedSession.serverUrl));
+            setMessage(getApiErrorMessage(error));
+          }
+
           return;
         }
 
         setServerUrl(getInitialMobileServerUrl(preferences));
       } finally {
         if (mounted) {
-          setHydrating(false);
+          setStartupPhase('ready');
         }
-      }
-    };
-
-    /**
-     * Keeps Web-style server fallback without blocking the native first screen.
-     */
-    const validateStoredSessionInBackground = async (
-      storedSession: MobileSession,
-      preferences: MobilePreferences,
-      isMounted: () => boolean,
-    ): Promise<void> => {
-      try {
-        const nextSession = await hydrateAuthenticatedMobileSession(storedSession, preferences);
-
-        if (!isMounted()) {
-          return;
-        }
-
-        setApiInfo(nextSession.apiInfo);
-        setSession(nextSession);
-        setServerUrl(nextSession.serverUrl);
-        void writeMobileSession(nextSession);
-        void mergeMobilePreferences({ serverUrl: nextSession.serverUrl });
-      } catch (error) {
-        await clearMobileSession();
-
-        if (!isMounted()) {
-          return;
-        }
-
-        setApiInfo(undefined);
-        setSession(undefined);
-        setServerUrl(getInitialMobileServerUrl(preferences, storedSession.serverUrl));
-        setMessage(getApiErrorMessage(error));
       }
     };
 
@@ -243,6 +242,56 @@ export default function App() {
   }, []);
 
   /**
+   * Revalidates the current saved session when the native app is opened again.
+   */
+  const validateCurrentSession = useCallback(async (): Promise<void> => {
+    if (!session || foregroundValidationRef.current) {
+      return;
+    }
+
+    let preferences: MobilePreferences = {};
+
+    foregroundValidationRef.current = true;
+    setStartupPhase('validating');
+    setMessage('');
+
+    try {
+      preferences = await readMobilePreferences();
+      const nextSession = await hydrateAuthenticatedMobileSession(session, preferences);
+
+      setApiInfo(nextSession.apiInfo);
+      setSession(nextSession);
+      setServerUrl(nextSession.serverUrl);
+      await writeMobileSession(nextSession);
+      await mergeMobilePreferences({ serverUrl: nextSession.serverUrl });
+    } catch (error) {
+      await clearMobileSession();
+      setApiInfo(undefined);
+      setSession(undefined);
+      setServerUrl(getInitialMobileServerUrl(preferences, session.serverUrl));
+      setMessage(getApiErrorMessage(error));
+    } finally {
+      foregroundValidationRef.current = false;
+      setStartupPhase('ready');
+    }
+  }, [session]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      const shouldValidate = /inactive|background/.test(appStateRef.current) && nextAppState === 'active';
+
+      setPrivacyScreenVisible(nextAppState !== 'active');
+      appStateRef.current = nextAppState;
+
+      if (shouldValidate) {
+        void validateCurrentSession();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [validateCurrentSession]);
+
+  /**
    * Switches the authenticated mobile workspace to a reachable configured server.
    */
   const handleApplyServerUrl = useCallback(async (nextServerUrl: string): Promise<void> => {
@@ -260,18 +309,13 @@ export default function App() {
     await mergeMobilePreferences({ serverUrl: normalizedUrl });
   }, [session]);
 
-  if (hydrating) {
+  if (startupPhase !== 'ready') {
     return (
-      <SafeAreaProvider>
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.bootPanel}>
-            <View style={[styles.bootMark, { backgroundColor: activeThemeToken.selection, borderColor: activeThemeToken.light }]}>
-              <ActivityIndicator color={activeThemeToken.hex} />
-            </View>
-            <Text style={[styles.bootText, { color: activeThemeToken.hex }]}>正在读取本地状态</Text>
-          </View>
-        </SafeAreaView>
-      </SafeAreaProvider>
+      <MobileBootScreen
+        phase={startupPhase}
+        privacyScreenVisible={privacyScreenVisible}
+        theme={activeThemeToken}
+      />
     );
   }
 
@@ -280,153 +324,243 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
-        <SafeAreaView edges={safeAreaEdges} style={styles.safeArea}>
-          <StatusBar style="dark" />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.keyboard}
-          >
-            {session ? (
-              <View style={styles.sessionContent}>
-                <MobileWorkspace
-                  initialActiveTheme={activeTheme}
-                  onApplyServerUrl={handleApplyServerUrl}
-                  onChangeRootTheme={setActiveTheme}
-                  onChangeTokens={handleChangeTokens}
-                  onLogout={handleLogout}
-                  session={session}
-                />
-              </View>
-            ) : (
-              <ScrollView
-                contentContainerStyle={styles.scrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-            <View style={styles.hero}>
-              <View style={styles.brandRow}>
-                <View
-                  style={[
-                    styles.brandMark,
-                    { backgroundColor: activeThemeToken.selection, borderColor: activeThemeToken.light },
-                  ]}
+        <View style={styles.appFrame}>
+          <SafeAreaView edges={safeAreaEdges} style={styles.safeArea}>
+            <StatusBar style="dark" />
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.keyboard}
+            >
+              {session ? (
+                <View style={styles.sessionContent}>
+                  <MobileWorkspace
+                    initialActiveTheme={activeTheme}
+                    onApplyServerUrl={handleApplyServerUrl}
+                    onChangeRootTheme={setActiveTheme}
+                    onChangeTokens={handleChangeTokens}
+                    onLogout={handleLogout}
+                    session={session}
+                  />
+                </View>
+              ) : (
+                <ScrollView
+                  contentContainerStyle={styles.scrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
                 >
-                  <Text style={[styles.brandMarkText, { color: activeThemeToken.hex }]}>KW</Text>
-                </View>
-                <View style={styles.brandCopy}>
-                  <Text style={styles.brand}>KW Photo</Text>
-                  <Text style={[styles.eyebrow, { color: activeThemeToken.hex }]}>Mobile workspace</Text>
-                </View>
-              </View>
-              <Text style={styles.title}>移动端工作区</Text>
-              <Text style={styles.subtitle}>
-                当前先复用共享 API 完成连接和登录，后续移动端会独立实现时间线、预览和上传体验。
-              </Text>
-            </View>
+                  <View style={styles.hero}>
+                    <View style={styles.brandRow}>
+                      <View
+                        style={[
+                          styles.brandMark,
+                          { backgroundColor: activeThemeToken.selection, borderColor: activeThemeToken.light },
+                        ]}
+                      >
+                        <Text style={[styles.brandMarkText, { color: activeThemeToken.hex }]}>KW</Text>
+                      </View>
+                      <View style={styles.brandCopy}>
+                        <Text style={styles.brand}>KW Photo</Text>
+                        <Text style={[styles.eyebrow, { color: activeThemeToken.hex }]}>Mobile workspace</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.title}>移动端工作区</Text>
+                    <Text style={styles.subtitle}>
+                      当前先复用共享 API 完成连接和登录，后续移动端会独立实现时间线、预览和上传体验。
+                    </Text>
+                  </View>
 
-            <View style={styles.panel}>
-              <Field
-                autoCapitalize="none"
-                editable={!busy}
-                keyboardType="url"
-                label="服务地址"
-                onChangeText={setServerUrl}
-                value={serverUrl}
-              />
-              <Pressable
-                disabled={busy}
-                onPress={handleConnect}
-                style={({ pressed }) => [
-                  styles.secondaryButton,
-                  { backgroundColor: activeThemeToken.selection, borderColor: activeThemeToken.light },
-                  pressed && !busy ? styles.pressedButton : null,
-                  busy ? styles.disabledButton : null,
-                ]}
-              >
-                {loadingAction === 'connect' ? <ActivityIndicator color={activeThemeToken.hex} /> : null}
-                <Text style={[styles.secondaryButtonText, { color: activeThemeToken.hex }]}>测试连接</Text>
-              </Pressable>
-
-              <View style={styles.divider} />
-
-              <Field
-                autoCapitalize="none"
-                editable={!busy}
-                label="账号"
-                onChangeText={setUsername}
-                textContentType="username"
-                value={username}
-              />
-              <Field
-                autoCapitalize="none"
-                editable={!busy}
-                label="密码"
-                onChangeText={setPassword}
-                rightAccessory={
-                  <Pressable
-                    accessibilityLabel={passwordVisible ? '隐藏密码' : '显示密码'}
-                    disabled={busy}
-                    hitSlop={8}
-                    onPress={() => setPasswordVisible((visible) => !visible)}
-                    style={styles.passwordVisibilityButton}
-                  >
-                    <Ionicons
-                      color={activeThemeToken.hex}
-                      name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
-                      size={20}
+                  <View style={styles.panel}>
+                    <Field
+                      autoCapitalize="none"
+                      editable={!busy}
+                      keyboardType="url"
+                      label="服务地址"
+                      onChangeText={setServerUrl}
+                      value={serverUrl}
                     />
-                  </Pressable>
-                }
-                secureTextEntry={!passwordVisible}
-                textContentType={passwordVisible ? 'none' : 'password'}
-                value={password}
-              />
-              <Field
-                editable={!busy}
-                keyboardType="number-pad"
-                label="两步验证码"
-                onChangeText={setOtp}
-                placeholder="未开启可留空"
-                value={otp}
-              />
-              <Pressable
-                disabled={busy}
-                onPress={handleLogin}
-                style={({ pressed }) => [
-                  styles.primaryButton,
-                  { backgroundColor: activeThemeToken.hex },
-                  pressed && !busy ? styles.pressedButton : null,
-                  busy ? styles.disabledButton : null,
-                ]}
-              >
-                {loadingAction === 'login' ? <ActivityIndicator color="#fff" /> : null}
-                <Text style={styles.primaryButtonText}>登录</Text>
-              </Pressable>
-            </View>
+                    <Pressable
+                      disabled={busy}
+                      onPress={handleConnect}
+                      style={({ pressed }) => [
+                        styles.secondaryButton,
+                        { backgroundColor: activeThemeToken.selection, borderColor: activeThemeToken.light },
+                        pressed && !busy ? styles.pressedButton : null,
+                        busy ? styles.disabledButton : null,
+                      ]}
+                    >
+                      {loadingAction === 'connect' ? <ActivityIndicator color={activeThemeToken.hex} /> : null}
+                      <Text style={[styles.secondaryButtonText, { color: activeThemeToken.hex }]}>测试连接</Text>
+                    </Pressable>
 
-            {apiInfo ? <ApiInfoCard apiInfo={apiInfo} theme={activeThemeToken} /> : null}
-            {message ? (
-              <Text
-                style={[
-                  styles.message,
-                  {
-                    backgroundColor: activeThemeToken.selection,
-                    borderColor: activeThemeToken.light,
-                    color: activeThemeToken.hex,
-                  },
-                ]}
-              >
-                {message}
-              </Text>
-            ) : null}
-              </ScrollView>
-            )}
-          </KeyboardAvoidingView>
-        </SafeAreaView>
+                    <View style={styles.divider} />
+
+                    <Field
+                      autoCapitalize="none"
+                      editable={!busy}
+                      label="账号"
+                      onChangeText={setUsername}
+                      textContentType="username"
+                      value={username}
+                    />
+                    <Field
+                      autoCapitalize="none"
+                      editable={!busy}
+                      label="密码"
+                      onChangeText={setPassword}
+                      rightAccessory={
+                        <Pressable
+                          accessibilityLabel={passwordVisible ? '隐藏密码' : '显示密码'}
+                          disabled={busy}
+                          hitSlop={8}
+                          onPress={() => setPasswordVisible((visible) => !visible)}
+                          style={styles.passwordVisibilityButton}
+                        >
+                          <Ionicons
+                            color={activeThemeToken.hex}
+                            name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
+                            size={20}
+                          />
+                        </Pressable>
+                      }
+                      secureTextEntry={!passwordVisible}
+                      textContentType={passwordVisible ? 'none' : 'password'}
+                      value={password}
+                    />
+                    <Field
+                      editable={!busy}
+                      keyboardType="number-pad"
+                      label="两步验证码"
+                      onChangeText={setOtp}
+                      placeholder="未开启可留空"
+                      value={otp}
+                    />
+                    <Pressable
+                      disabled={busy}
+                      onPress={handleLogin}
+                      style={({ pressed }) => [
+                        styles.primaryButton,
+                        { backgroundColor: activeThemeToken.hex },
+                        pressed && !busy ? styles.pressedButton : null,
+                        busy ? styles.disabledButton : null,
+                      ]}
+                    >
+                      {loadingAction === 'login' ? <ActivityIndicator color="#fff" /> : null}
+                      <Text style={styles.primaryButtonText}>登录</Text>
+                    </Pressable>
+                  </View>
+
+                  {apiInfo ? <ApiInfoCard apiInfo={apiInfo} theme={activeThemeToken} /> : null}
+                  {message ? (
+                    <Text
+                      style={[
+                        styles.message,
+                        {
+                          backgroundColor: activeThemeToken.selection,
+                          borderColor: activeThemeToken.light,
+                          color: activeThemeToken.hex,
+                        },
+                      ]}
+                    >
+                      {message}
+                    </Text>
+                  ) : null}
+                </ScrollView>
+              )}
+            </KeyboardAvoidingView>
+          </SafeAreaView>
+          <MobilePrivacyScreen visible={privacyScreenVisible} />
+        </View>
       </SafeAreaProvider>
     </QueryClientProvider>
   );
 }
+
+interface MobileBootScreenProps {
+  phase: Exclude<StartupPhase, 'ready'>;
+  privacyScreenVisible: boolean;
+  theme: typeof DEFAULT_THEME;
+}
+
+const BOOT_COPY: Record<Exclude<StartupPhase, 'ready'>, { description: string; title: string }> = {
+  reading: {
+    description: '连接 MT Photos 服务端...',
+    title: '正在恢复会话',
+  },
+  validating: {
+    description: '连接 MT Photos 服务端...',
+    title: '正在恢复会话',
+  },
+};
+
+/**
+ * Renders the native boot screen while mobile restores and validates a saved session.
+ */
+const MobileBootScreen = ({ phase, privacyScreenVisible, theme }: MobileBootScreenProps) => {
+  const copy = BOOT_COPY[phase];
+
+  return (
+    <SafeAreaProvider>
+      <View style={styles.appFrame}>
+        <LinearGradient
+          colors={['#fff', 'rgb(252, 252, 252)', MOBILE_SAGE_NEUTRALS.pageBg]}
+          end={{ x: 1, y: 1 }}
+          locations={[0, 0.48, 1]}
+          start={{ x: 0, y: 0 }}
+          style={styles.bootBackground}
+        >
+          <BootRadialHighlight color={theme.selection} />
+          <SafeAreaView style={styles.bootSafeArea}>
+            <View style={styles.bootPanel}>
+              <Text style={styles.bootBrandText}>MT</Text>
+              <Text style={styles.bootTitle}>{copy.title}</Text>
+              <Text style={styles.bootDescription}>{copy.description}</Text>
+            </View>
+          </SafeAreaView>
+        </LinearGradient>
+        <MobilePrivacyScreen visible={privacyScreenVisible} />
+      </View>
+    </SafeAreaProvider>
+  );
+};
+
+/**
+ * Recreates the Web splash radial highlight with SVG so the edge remains smooth on native.
+ */
+const BootRadialHighlight = ({ color }: { color: string }) => {
+  return (
+    <Svg height="100%" pointerEvents="none" style={styles.bootRadialHighlight} width="100%">
+      <Defs>
+        <RadialGradient cx="18%" cy="14%" fx="18%" fy="14%" id="boot-radial-highlight" r="36%">
+          <Stop offset="0" stopColor={color} stopOpacity="0.3" />
+          <Stop offset="0.62" stopColor={color} stopOpacity="0.18" />
+          <Stop offset="1" stopColor={color} stopOpacity="0" />
+        </RadialGradient>
+      </Defs>
+      <Rect fill="url(#boot-radial-highlight)" height="100%" width="100%" x="0" y="0" />
+    </Svg>
+  );
+};
+
+/**
+ * Covers all mobile content when the app leaves the foreground.
+ */
+const MobilePrivacyScreen = ({ visible }: { visible: boolean }) => {
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <View pointerEvents="auto" style={styles.privacyScreen}>
+      <BlurView
+        experimentalBlurMethod="dimezisBlurView"
+        intensity={100}
+        style={styles.privacyBlur}
+        tint="light"
+      />
+      <View style={styles.privacyTint} />
+    </View>
+  );
+};
 
 interface FieldProps {
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
@@ -579,27 +713,46 @@ const normalizeServerUrl = (value: string): string => {
 };
 
 const styles = StyleSheet.create({
+  appFrame: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.pageBg,
+    flex: 1,
+  },
   apiInfoRow: {
     color: MOBILE_SAGE_SLATE.muted,
+  },
+  bootBackground: {
+    flex: 1,
+    overflow: 'hidden',
   },
   bootPanel: {
     alignItems: 'center',
     flex: 1,
-    gap: 11,
+    gap: 10,
     justifyContent: 'center',
   },
-  bootMark: {
-    alignItems: 'center',
-    borderRadius: 18,
-    borderWidth: 1,
-    height: 48,
-    justifyContent: 'center',
-    width: 48,
+  bootSafeArea: {
+    flex: 1,
   },
-  bootText: {
-    color: MOBILE_SAGE_SLATE.muted,
+  bootBrandText: {
+    color: MOBILE_SAGE_SLATE.body,
+    fontSize: 15,
+    fontWeight: '600',
+    height: 32,
+    lineHeight: 32,
+    textAlign: 'center',
+    width: 32,
+  },
+  bootDescription: {
+    color: MOBILE_SAGE_SLATE.subtle,
     fontSize: 13,
-    fontWeight: '800',
+  },
+  bootRadialHighlight: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  bootTitle: {
+    color: MOBILE_SAGE_SLATE.title,
+    fontSize: 18,
+    fontWeight: '700',
   },
   brand: {
     color: MOBILE_SAGE_SLATE.title,
@@ -733,6 +886,19 @@ const styles = StyleSheet.create({
   },
   pressedButton: {
     transform: [{ translateY: 1 }],
+  },
+  privacyBlur: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  privacyScreen: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(248, 250, 252, 0.22)',
+    elevation: 999,
+    zIndex: 999,
+  },
+  privacyTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   primaryButton: {
     alignItems: 'center',

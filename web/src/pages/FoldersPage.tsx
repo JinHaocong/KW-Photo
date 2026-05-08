@@ -262,11 +262,6 @@ export const FoldersPage = ({
   const showDirectoryContent = !showingOptimisticDirectory && !error && hasDirectoryContent;
   const showEmptyDirectory = !showingOptimisticDirectory && !loading && !error && !hasDirectoryContent;
   const showLoadingOverlay = !showingOptimisticDirectory && loading && hasDirectoryContent && !error;
-  const scanningCount = useMemo(
-    () =>
-      toolbarDirectory.folders.filter((folder) => folder.status === "scanning").length,
-    [toolbarDirectory.folders],
-  );
   const folderMotionCustom = useMemo<FolderPageMotionCustom>(
     () => ({
       direction: folderTransitionDirection,
@@ -1298,7 +1293,6 @@ export const FoldersPage = ({
           />
           <FolderMetric label="直接文件" value={String(directFileCount)} />
           <FolderMetric label="回收站" value={String(toolbarDirectory.trashCount)} />
-          <FolderMetric label="扫描中" value={String(scanningCount)} />
         </div>
 
         {error ? (

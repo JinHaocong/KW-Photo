@@ -1,6 +1,7 @@
 internal import Expo
 import React
 import ReactAppDependencyProvider
+import UIKit
 
 @main
 class AppDelegate: ExpoAppDelegate {
@@ -8,6 +9,7 @@ class AppDelegate: ExpoAppDelegate {
 
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
+  private var privacyBlurView: UIVisualEffectView?
 
   public override func application(
     _ application: UIApplication,
@@ -27,6 +29,8 @@ class AppDelegate: ExpoAppDelegate {
       in: window,
       launchOptions: launchOptions)
 #endif
+
+    configurePrivacyBlurNotifications()
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
@@ -48,6 +52,41 @@ class AppDelegate: ExpoAppDelegate {
   ) -> Bool {
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result
+  }
+
+  private func configurePrivacyBlurNotifications() {
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(showPrivacyBlur),
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(hidePrivacyBlur),
+      name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
+  }
+
+  @objc private func showPrivacyBlur() {
+    guard privacyBlurView == nil, let window else {
+      return
+    }
+
+    // Native blur is added before iOS captures the app switcher snapshot.
+    let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterialLight))
+    blurView.backgroundColor = UIColor(white: 1, alpha: 0.32)
+    blurView.frame = window.bounds
+    blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    window.addSubview(blurView)
+    window.bringSubviewToFront(blurView)
+    privacyBlurView = blurView
+  }
+
+  @objc private func hidePrivacyBlur() {
+    privacyBlurView?.removeFromSuperview()
+    privacyBlurView = nil
   }
 }
 

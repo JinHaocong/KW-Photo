@@ -232,6 +232,7 @@ type MobileFolderDirectoryNavigation = NativeStackNavigationProp<
 >;
 
 interface MobileFolderDirectoryScreenProps extends MobileFoldersHomeProps {
+  initialDirectory?: FolderDirectory;
   navigation: MobileFolderDirectoryNavigation;
   route: MobileFolderDirectoryRoute;
 }
@@ -305,6 +306,7 @@ export const MobileFoldersHome = ({
   session,
 }: MobileFoldersHomeProps) => {
   const theme = useMobileTheme();
+  const [initialDirectory, setInitialDirectory] = useState<FolderDirectory>();
   const [initialFolderId, setInitialFolderId] = useState<number>();
   const [preferencesHydrated, setPreferencesHydrated] = useState(false);
 
@@ -312,18 +314,33 @@ export const MobileFoldersHome = ({
     let mounted = true;
 
     /**
-     * Restores the last visited folder as the initial native stack route.
+     * Restores the last visited folder and its cached directory before the stack first paints.
      */
     const hydrateInitialFolder = async (): Promise<void> => {
       const preferences = await readMobilePreferences();
+      const nextInitialFolderId =
+        typeof preferences.currentFolderId === "number"
+          ? preferences.currentFolderId
+          : undefined;
+      const cacheScope = createMobileLocalCacheScope({
+        serverUrl: session.serverUrl,
+        userId: session.user.id,
+        username: session.user.username,
+      });
+      const cachedDirectory =
+        preferences.localCacheEnabled ?? true
+          ? await readCachedMobileDirectory({
+              folderId: nextInitialFolderId,
+              scope: cacheScope,
+            })
+          : undefined;
 
       if (!mounted) {
         return;
       }
 
-      if (typeof preferences.currentFolderId === "number") {
-        setInitialFolderId(preferences.currentFolderId);
-      }
+      setInitialDirectory(cachedDirectory);
+      setInitialFolderId(nextInitialFolderId);
 
       setPreferencesHydrated(true);
     };
@@ -356,6 +373,11 @@ export const MobileFoldersHome = ({
             <MobileFolderDirectoryScreen
               navigation={navigation}
               externalVideoPlayer={externalVideoPlayer}
+              initialDirectory={
+                route.params?.folderId === initialFolderId
+                  ? initialDirectory
+                  : undefined
+              }
               onChangeTokens={onChangeTokens}
               onLogout={onLogout}
               rootRequestVersion={rootRequestVersion}
@@ -374,6 +396,7 @@ export const MobileFoldersHome = ({
  */
 const MobileFolderDirectoryScreen = ({
   externalVideoPlayer,
+  initialDirectory,
   navigation,
   onChangeTokens,
   onLogout,
@@ -385,13 +408,15 @@ const MobileFolderDirectoryScreen = ({
   const safeAreaInsets = useSafeAreaInsets();
   const currentFolderId = route.params?.folderId;
   const [cacheEnabled, setCacheEnabled] = useState(true);
-  const [directory, setDirectory] = useState<FolderDirectory>();
+  const [directory, setDirectory] = useState<FolderDirectory | undefined>(
+    () => initialDirectory,
+  );
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [folderFabOpen, setFolderFabOpen] = useState(false);
   const [error, setError] = useState("");
   const [folderCardSize, setFolderCardSize] =
     useState<MobileFolderCardSize>(DEFAULT_CARD_SIZE);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !initialDirectory);
   const [mediaAuthLoading, setMediaAuthLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [folderDialogError, setFolderDialogError] = useState("");

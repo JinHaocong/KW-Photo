@@ -42,6 +42,24 @@ export interface LocalCacheFolderSummary extends LocalCacheFolderRef {
   videoPosterCount: number;
 }
 
+export interface LocalCacheStats {
+  coverCount: number;
+  directoryCount: number;
+  hdThumbnailCount: number;
+  latestCachedAt?: number;
+  mediaCount: number;
+  originalImageCount: number;
+  originalVideoCount: number;
+  thumbnailCount: number;
+  totalCount: number;
+  totalSize: number;
+  unusedCount: number;
+  unusedSize: number;
+  usefulCount: number;
+  usefulSize: number;
+  videoPosterCount: number;
+}
+
 export interface LocalCacheStorageInfo {
   backend: 'app-data' | 'indexeddb';
   blobsPath?: string;
@@ -54,7 +72,7 @@ export interface LocalCacheStorageInfo {
 export interface LocalCacheChangeDetail {
   folderScopeKeys?: string[];
   key?: string;
-  reason: 'clear-all' | 'clear-scope' | 'delete-folder' | 'preferences' | 'write';
+  reason: 'clear-all' | 'clear-scope' | 'clear-unused' | 'delete-folder' | 'preferences' | 'write';
   scope?: string;
 }
 
@@ -69,6 +87,7 @@ interface LocalCacheResourceRecord {
   folderName: string;
   folderPath: string;
   folderScopeKey: string;
+  hasBlob?: boolean;
   key: string;
   kind: LocalCacheResourceKind;
   kindLabel?: string;
@@ -109,6 +128,12 @@ interface NativeLocalCacheStorageInfo {
   rootDir: string;
 }
 
+interface NativeLocalCacheInspection {
+  records: NativeLocalCacheResourceRecord[];
+  unusedCount: number;
+  unusedSize: number;
+}
+
 interface NativeMediaFetchResult {
   blobBytes: number[];
   contentType?: string;
@@ -118,6 +143,14 @@ interface NativeMediaFetchResult {
 interface FetchedMediaBlob {
   blob: Blob;
   contentType?: string;
+}
+
+interface LocalCachePayloadInspection {
+  staleRecordKeys: Set<string>;
+  usefulRecords: LocalCacheResourceRecord[];
+  usefulSizeByKey: Map<string, number>;
+  unusedCount: number;
+  unusedSize: number;
 }
 
 const LOCAL_CACHE_DB_NAME = 'kwphoto-local-cache';
@@ -460,12 +493,49 @@ const fetchMediaBlob = async (url: string): Promise<FetchedMediaBlob> => {
 };
 
 /**
+ * Reads useful indexed cache plus orphaned desktop payloads for management screens.
+ */
+export const readLocalCacheStats = async (scope?: string): Promise<LocalCacheStats> => {
+  const inspection = await inspectLocalCachePayloads();
+  const usefulRecords = inspection.usefulRecords.filter((record) => !scope || getCacheRecordScope(record) === scope);
+  const stats = usefulRecords.reduce<LocalCacheStats>(
+    (summary, record) => {
+      const resourceKind = normalizeCacheResourceKind(record);
+      const recordSize = inspection.usefulSizeByKey.get(record.key) ?? record.size;
+
+      summary.usefulCount += 1;
+      summary.usefulSize += recordSize;
+      summary.latestCachedAt = Math.max(summary.latestCachedAt ?? 0, record.updatedAt);
+      summary.directoryCount += resourceKind === 'directory' ? 1 : 0;
+      summary.mediaCount += resourceKind === 'directory' ? 0 : 1;
+      summary.coverCount += resourceKind === 'folder-cover' ? 1 : 0;
+      summary.hdThumbnailCount += resourceKind === 'file-hd-thumbnail' ? 1 : 0;
+      summary.originalImageCount += resourceKind === 'image-preview' ? 1 : 0;
+      summary.originalVideoCount += resourceKind === 'video-preview' ? 1 : 0;
+      summary.thumbnailCount += resourceKind === 'file-thumbnail' ? 1 : 0;
+      summary.videoPosterCount += resourceKind === 'video-poster' ? 1 : 0;
+      return summary;
+    },
+    createEmptyLocalCacheStats(),
+  );
+
+  if (!scope) {
+    stats.unusedCount = inspection.unusedCount;
+    stats.unusedSize = inspection.unusedSize;
+  }
+
+  stats.totalCount = stats.usefulCount + stats.unusedCount;
+  stats.totalSize = stats.usefulSize + stats.unusedSize;
+  return stats;
+};
+
+/**
  * Lists cache usage grouped by folder.
  */
 export const listLocalCacheFolders = async (
   scope?: string,
 ): Promise<LocalCacheFolderSummary[]> => {
-  const records = await readAllCacheRecords();
+  const { usefulRecords: records } = await inspectLocalCachePayloads();
   const folders = new Map<string, LocalCacheFolderSummary>();
 
   records
@@ -597,6 +667,46 @@ export const clearLocalCache = async (scope?: string): Promise<void> => {
 };
 
 /**
+ * Clears all indexed cache records while leaving orphan cleanup explicit.
+ */
+export const clearUsefulLocalCache = async (): Promise<void> => {
+  await clearLocalCache();
+};
+
+/**
+ * Clears cache payloads that are no longer reachable from the index.
+ */
+export const clearUnusedLocalCache = async (): Promise<void> => {
+  invalidateInMemoryMediaCache();
+
+  if (isNativeAppCacheRuntime()) {
+    await getRequiredDesktopLocalCacheBridge().clearUnused();
+    notifyLocalCacheChange({ reason: 'clear-unused' });
+    return;
+  }
+
+  const inspection = await inspectLocalCachePayloads();
+
+  await deleteCacheRecordsByKeys(inspection.staleRecordKeys);
+  notifyLocalCacheChange({ reason: 'clear-unused' });
+};
+
+/**
+ * Clears both indexed cache records and orphaned payloads.
+ */
+export const clearAllLocalCache = async (): Promise<void> => {
+  invalidateInMemoryMediaCache();
+
+  if (isNativeAppCacheRuntime()) {
+    await getRequiredDesktopLocalCacheBridge().clearAll();
+    notifyLocalCacheChange({ reason: 'clear-all' });
+    return;
+  }
+
+  await clearLocalCache();
+};
+
+/**
  * Reads the physical cache backend used by the current runtime.
  */
 export const readLocalCacheStorageInfo = async (): Promise<LocalCacheStorageInfo> => {
@@ -646,6 +756,23 @@ export const formatCacheSize = (size: number): string => {
 
   return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
 };
+
+const createEmptyLocalCacheStats = (): LocalCacheStats => ({
+  coverCount: 0,
+  directoryCount: 0,
+  hdThumbnailCount: 0,
+  mediaCount: 0,
+  originalImageCount: 0,
+  originalVideoCount: 0,
+  thumbnailCount: 0,
+  totalCount: 0,
+  totalSize: 0,
+  unusedCount: 0,
+  unusedSize: 0,
+  usefulCount: 0,
+  usefulSize: 0,
+  videoPosterCount: 0,
+});
 
 const openLocalCacheDatabase = (): Promise<IDBDatabase> => {
   if (!('indexedDB' in window)) {
@@ -737,6 +864,88 @@ const readAllCacheRecords = async (): Promise<LocalCacheResourceRecord[]> => {
 
     request.onsuccess = () => resolve(request.result as LocalCacheResourceRecord[]);
     request.onerror = () => reject(request.error);
+  });
+};
+
+const inspectLocalCachePayloads = async (): Promise<LocalCachePayloadInspection> => {
+  if (isNativeAppCacheRuntime()) {
+    const inspection = await getRequiredDesktopLocalCacheBridge().inspect() as NativeLocalCacheInspection;
+    const records = inspection.records.map((record) => fromNativeCacheRecord(record));
+
+    return inspectCacheRecords(records, inspection.unusedCount, inspection.unusedSize);
+  }
+
+  return inspectCacheRecords(await readAllCacheRecords(), 0, 0);
+};
+
+const inspectCacheRecords = (
+  records: LocalCacheResourceRecord[],
+  unusedCount: number,
+  unusedSize: number,
+): LocalCachePayloadInspection => {
+  const staleRecordKeys = new Set<string>();
+  const usefulRecords: LocalCacheResourceRecord[] = [];
+  const usefulSizeByKey = new Map<string, number>();
+
+  records.forEach((record) => {
+    const payloadSize = readCacheRecordPayloadSize(record);
+
+    if (payloadSize.exists) {
+      usefulRecords.push(record);
+      usefulSizeByKey.set(record.key, payloadSize.size);
+    } else {
+      staleRecordKeys.add(record.key);
+    }
+  });
+
+  return {
+    staleRecordKeys,
+    usefulRecords,
+    usefulSizeByKey,
+    unusedCount: staleRecordKeys.size + unusedCount,
+    unusedSize,
+  };
+};
+
+const readCacheRecordPayloadSize = (record: LocalCacheResourceRecord): { exists: boolean; size: number } => {
+  const resourceKind = normalizeCacheResourceKind(record);
+
+  if (resourceKind === 'directory') {
+    return {
+      exists: Boolean(record.directory),
+      size: record.size,
+    };
+  }
+
+  if (record.blob) {
+    return {
+      exists: true,
+      size: record.blob.size,
+    };
+  }
+
+  return {
+    exists: record.hasBlob === true,
+    size: record.hasBlob === true ? record.size : 0,
+  };
+};
+
+const deleteCacheRecordsByKeys = async (keys: ReadonlySet<string>): Promise<void> => {
+  if (keys.size === 0) {
+    return;
+  }
+
+  const database = await openLocalCacheDatabase();
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(LOCAL_CACHE_STORE, 'readwrite');
+    const store = transaction.objectStore(LOCAL_CACHE_STORE);
+
+    keys.forEach((key) => {
+      store.delete(key);
+    });
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
   });
 };
 

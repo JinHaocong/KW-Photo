@@ -83,7 +83,8 @@ export const MobileSettingsPage = ({
     backupUrl,
     cacheStats,
     confirmClearAllCache,
-    confirmClearCache,
+    confirmClearUnusedCache,
+    confirmClearUsefulCache,
     confirmResetBehavior,
     handleChangeExternalVideoPlayer,
     handleChangePreferredServerAddress,
@@ -296,6 +297,9 @@ export const MobileSettingsPage = ({
           meta={localCacheEnabled ? '已开启' : '已关闭'}
           title="本地缓存"
         >
+          <InfoRow label="总缓存" value={formatStorageSize(cacheStats.totalSize)} />
+          <InfoRow label="可用缓存" value={formatStorageSize(cacheStats.usefulSize)} />
+          <InfoRow label="残留缓存" value={formatStorageSize(cacheStats.unusedSize)} />
           <InfoRow label="目录快照" value={`${cacheStats.directoryCount} 个`} />
           <InfoRow label="文件夹封面" value={`${cacheStats.coverCount} 张`} />
           <InfoRow label="列表缩略图" value={`${cacheStats.thumbnailCount} 张`} />
@@ -303,13 +307,17 @@ export const MobileSettingsPage = ({
           <InfoRow label="高清缩略图" value={`${cacheStats.hdThumbnailCount} 张`} />
           <InfoRow label="原图预览" value={`${cacheStats.originalImageCount} 张`} />
           <InfoRow label="视频预览" value={`${cacheStats.originalVideoCount} 个`} />
-          <InfoRow label="估算大小" value={formatStorageSize(cacheStats.approximateSize)} />
+          <InfoRow label="可用资源" value={`${cacheStats.usefulCount} 项`} />
+          <InfoRow label="残留资源" value={`${cacheStats.unusedCount} 项`} />
           <InfoRow label="最近缓存" value={formatTimestamp(cacheStats.latestCachedAt)} />
-          <Pressable onPress={confirmClearCache} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>清理本账号缓存</Text>
+          <Pressable onPress={confirmClearUsefulCache} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>清理可用缓存</Text>
+          </Pressable>
+          <Pressable onPress={confirmClearUnusedCache} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>清理残留缓存</Text>
           </Pressable>
           <Pressable onPress={confirmClearAllCache} style={styles.dangerButton}>
-            <Text style={styles.dangerButtonText}>清理全部移动端缓存</Text>
+            <Text style={styles.dangerButtonText}>清理全部缓存</Text>
           </Pressable>
         </SectionCard>
 

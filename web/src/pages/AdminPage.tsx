@@ -18,7 +18,6 @@ import { AdminTasksPanel } from "../components/admin/AdminTasksPanel";
 import { AdminUsersPanel } from "../components/admin/AdminUsersPanel";
 import type { AdminTab } from "../components/admin/admin-types";
 import { useLocalCachePreferences } from "../hooks/useLocalCachePreferences";
-import { createLocalCacheScope } from "../shared/local-cache";
 import type { UploadTask } from "../shared/types";
 import {
   readAdminPreferences,
@@ -73,7 +72,6 @@ export const AdminPage = ({ onShowToast, uploadTasks }: AdminPageProps) => {
   const tokens = useSessionStore((state) => state.tokens);
   const user = useSessionStore((state) => state.user);
   const { cacheEnabled, setCacheEnabled } = useLocalCachePreferences();
-  const cacheScope = createLocalCacheScope({ serverUrl, userId: user?.id });
   const apiOptions = useMemo(
     () => ({
       baseUrl: serverUrl,
@@ -114,7 +112,6 @@ export const AdminPage = ({ onShowToast, uploadTasks }: AdminPageProps) => {
             <AdminOverviewPanel
               apiInfo={apiInfo}
               cacheEnabled={cacheEnabled}
-              cacheScope={cacheScope}
               onOpenTab={setActiveTab}
               serverUrl={serverUrl}
               tokens={tokens}
@@ -146,13 +143,12 @@ export const AdminPage = ({ onShowToast, uploadTasks }: AdminPageProps) => {
           {activeTab === "cache" ? (
             <CacheManagementPanel
               cacheEnabled={cacheEnabled}
-              description="查看当前账号按文件夹维度沉淀的目录、缩略图、原图和视频缓存，并支持清理单个文件夹。"
+              description="查看所有账号和服务端沉淀的可用缓存与残留缓存，并支持清理单个文件夹。"
               onShowToast={onShowToast}
               onToggleCache={(enabled) => {
                 setCacheEnabled(enabled);
                 onShowToast(enabled ? "本地缓存已开启" : "本地缓存已关闭");
               }}
-              scope={cacheScope}
               title="缓存管理"
             />
           ) : null}

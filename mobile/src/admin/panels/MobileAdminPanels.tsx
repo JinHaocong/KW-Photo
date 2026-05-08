@@ -625,20 +625,20 @@ export const UserPanel = ({ currentUser, users }: { currentUser?: CurrentUser; u
 export const CachePanel = ({
   actionLoading,
   cacheEnabled,
-  cacheScope,
   stats,
   onClearAllCache,
-  onClearCache,
+  onClearUnusedCache,
+  onClearUsefulCache,
   onClearFolderBranch,
   onRefreshCache,
   onToggleCache,
 }: {
   actionLoading: string;
   cacheEnabled: boolean;
-  cacheScope: string;
   stats: MobileCacheStats;
   onClearAllCache: () => Promise<void>;
-  onClearCache: () => Promise<void>;
+  onClearUnusedCache: () => Promise<void>;
+  onClearUsefulCache: () => Promise<void>;
   onClearFolderBranch: (folderScopeKeys: string[], folderName: string) => Promise<void>;
   onRefreshCache: () => Promise<void>;
   onToggleCache: () => Promise<void>;
@@ -649,7 +649,6 @@ export const CachePanel = ({
   const [loadingFolders, setLoadingFolders] = useState(false);
   const folderTree = useMemo(() => buildCacheFolderTree(folders), [folders]);
   const cacheResourceCount = stats.directoryCount + stats.mediaCount;
-  const previewResourceCount = stats.hdThumbnailCount + stats.originalImageCount + stats.originalVideoCount + stats.videoPosterCount;
   const cacheStatusLabel = cacheEnabled ? '本地缓存已开启' : '本地缓存已关闭';
   const latestCachedLabel = formatAdminDateTime(stats.latestCachedAt);
 
@@ -657,15 +656,15 @@ export const CachePanel = ({
     setLoadingFolders(true);
 
     try {
-      setFolders(await listMobileCacheFolders(cacheScope));
+      setFolders(await listMobileCacheFolders());
     } finally {
       setLoadingFolders(false);
     }
-  }, [cacheScope]);
+  }, []);
 
   useEffect(() => {
     void refreshCacheFolders();
-  }, [refreshCacheFolders, stats.latestCachedAt, stats.approximateSize]);
+  }, [refreshCacheFolders, stats.latestCachedAt, stats.totalSize, stats.usefulCount]);
 
   /**
    * Toggles one cache tree branch while keeping every branch collapsed by default.
@@ -692,10 +691,18 @@ export const CachePanel = ({
   };
 
   /**
-   * Clears the current account cache and refreshes folder-level rows.
+   * Clears indexed cache records and refreshes folder-level rows.
    */
-  const handleClearAccountCache = async (): Promise<void> => {
-    await onClearCache();
+  const handleClearUsefulCache = async (): Promise<void> => {
+    await onClearUsefulCache();
+    await refreshCacheFolders();
+  };
+
+  /**
+   * Clears orphaned cache payloads and refreshes folder-level rows.
+   */
+  const handleClearUnusedCache = async (): Promise<void> => {
+    await onClearUnusedCache();
     await refreshCacheFolders();
   };
 
@@ -727,7 +734,7 @@ export const CachePanel = ({
           <View style={styles.cacheHeroCopy}>
             <Text style={styles.cacheHeroKicker}>移动端缓存</Text>
             <Text style={styles.cacheHeroTitle}>缓存管理</Text>
-            <Text style={styles.cacheHeroSubtitle}>目录快照、缩略图、视频海报、原图和视频会按当前账号独立保存。</Text>
+            <Text style={styles.cacheHeroSubtitle}>目录快照、缩略图、视频海报、原图和视频会按服务端与账号隔离保存。</Text>
           </View>
           <Pressable
             onPress={() => void onToggleCache()}
@@ -744,8 +751,9 @@ export const CachePanel = ({
         </View>
 
         <View style={styles.cacheHeroStats}>
-          <CacheHeroStat label="占用空间" meta="近似值" value={formatFileSize(stats.approximateSize)} />
-          <CacheHeroStat label="缓存资源" meta={`${folders.length} 个文件夹`} value={String(cacheResourceCount)} />
+          <CacheHeroStat label="总缓存" meta={`${stats.totalCount} 项资源`} value={formatFileSize(stats.totalSize)} />
+          <CacheHeroStat label="可用缓存" meta="页面可直接命中" value={formatFileSize(stats.usefulSize)} />
+          <CacheHeroStat label="残留缓存" meta={`${stats.unusedCount} 项残留`} value={formatFileSize(stats.unusedSize)} />
         </View>
 
         <View style={styles.cacheCompositionRow}>
@@ -766,19 +774,29 @@ export const CachePanel = ({
             <AdminActionButton
               danger
               icon="trash-outline"
-              label="清理本账号"
-              loading={actionLoading === 'clear-cache'}
-              onPress={() => Alert.alert('清理缓存', '确定清理当前账号下的全部移动端缓存吗？', [
+              label="清理可用"
+              loading={actionLoading === 'clear-useful-cache'}
+              onPress={() => Alert.alert('清理可用缓存', '确定清理当前仍可命中的目录快照、缩略图、原图和视频缓存吗？', [
                 { style: 'cancel', text: '取消' },
-                { onPress: () => void handleClearAccountCache(), style: 'destructive', text: '清理' },
+                { onPress: () => void handleClearUsefulCache(), style: 'destructive', text: '清理' },
+              ])}
+            />
+            <AdminActionButton
+              danger
+              icon="alert-circle-outline"
+              label="清理残留"
+              loading={actionLoading === 'clear-unused-cache'}
+              onPress={() => Alert.alert('清理残留缓存', '确定清理索引外文件、旧版本目录缓存和失效记录吗？可用缓存会保留。', [
+                { style: 'cancel', text: '取消' },
+                { onPress: () => void handleClearUnusedCache(), style: 'destructive', text: '清理残留' },
               ])}
             />
             <AdminActionButton
               danger
               icon="warning-outline"
-              label="清理全端"
+              label="清理全部"
               loading={actionLoading === 'clear-all-mobile-cache'}
-              onPress={() => Alert.alert('清理全部移动端缓存', '确定清理所有账号、所有服务端下的移动端缓存，并删除本机缓存目录吗？', [
+              onPress={() => Alert.alert('清理全部缓存', '确定清理所有可用缓存和残留缓存，并删除本机缓存目录吗？', [
                 { style: 'cancel', text: '取消' },
                 { onPress: () => void handleClearEveryCache(), style: 'destructive', text: '全部清理' },
               ])}
@@ -787,7 +805,7 @@ export const CachePanel = ({
         </View>
       </View>
 
-      <CacheSectionHeader meta={`${cacheResourceCount} 项资源 · ${formatFileSize(stats.approximateSize)}`} title="缓存组成" />
+      <CacheSectionHeader meta={`${cacheResourceCount} 项可用 · ${formatFileSize(stats.usefulSize)}`} title="可用缓存组成" />
       <View style={styles.cacheDetailGrid}>
         <CacheDetailStat icon="folder-outline" label="目录快照" meta="文件夹列表首屏" value={String(stats.directoryCount)} />
         <CacheDetailStat icon="image-outline" label="列表缩略图" meta="浏览列表缩略图" value={String(stats.thumbnailCount)} />
@@ -796,6 +814,7 @@ export const CachePanel = ({
         <CacheDetailStat icon="albums-outline" label="文件夹封面" meta="图库入口封面" value={String(stats.coverCount)} />
         <CacheDetailStat icon="expand-outline" label="原图预览" meta="图片原图资源" value={String(stats.originalImageCount)} />
         <CacheDetailStat icon="videocam-outline" label="视频预览" meta="视频原始资源" value={String(stats.originalVideoCount)} />
+        <CacheDetailStat icon="alert-circle-outline" label="残留缓存" meta="索引外/失效" value={String(stats.unusedCount)} />
       </View>
 
       <View style={styles.cacheFolderSection}>

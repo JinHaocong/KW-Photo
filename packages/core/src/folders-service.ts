@@ -306,7 +306,6 @@ const mapFolder = (folder: FolderItemResponse, parentPath: string): FolderSummar
     id: folder.id ?? 0,
     name: displayName,
     path: folder.path || joinPath(parentPath, pathName),
-    status: fileCount === 0 && childCount === 0 ? 'empty' : 'ready',
     trashCount: folder.trashNum ?? 0,
     updatedAt: folder.galleryName ? `图库 ${folder.galleryName}` : '已同步',
   };

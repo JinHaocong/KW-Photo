@@ -9,11 +9,18 @@ export interface DesktopRuntimeInfo {
 
 export interface DesktopLocalCacheBridge {
   clear: (params: { scope?: string | null }) => Promise<void>;
+  clearAll: () => Promise<void>;
+  clearUnused: () => Promise<void>;
   deleteFolder: (params: { folderScopeKey: string }) => Promise<void>;
   fetchMedia: (params: { url: string }) => Promise<{
     blobBytes: number[];
     contentType?: string;
     statusCode: number;
+  }>;
+  inspect: () => Promise<{
+    records: unknown[];
+    unusedCount: number;
+    unusedSize: number;
   }>;
   listRecords: (params: { scope?: string | null }) => Promise<unknown[]>;
   readRecord: (params: { key: string }) => Promise<unknown>;

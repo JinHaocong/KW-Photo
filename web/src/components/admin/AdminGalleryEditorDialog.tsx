@@ -178,7 +178,7 @@ export const AdminGalleryEditorDialog = ({
       open={true}
       title={editorTitle}
     >
-      <p>{gallery ? `${gallery.name} · 调整文件夹、用户和识别任务` : '创建一个新的图库入口并绑定可浏览文件夹。'}</p>
+      <p>{gallery ? `${gallery.name} · 调整文件夹、用户和识别任务` : '创建一个新的图库入口并绑定文件夹。'}</p>
 
       <div className="gallery-editor-grid">
           <label className="settings-field">

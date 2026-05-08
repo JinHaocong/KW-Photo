@@ -51,7 +51,6 @@ export interface FolderSummary {
   coverHashes: string[];
   galleryName?: string;
   trashCount: number;
-  status: 'ready' | 'scanning' | 'empty';
 }
 
 export interface FolderFileSummary {

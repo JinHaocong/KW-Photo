@@ -225,7 +225,7 @@ export const GalleryEditorModal = ({
           <View style={styles.modalHeader}>
             <View>
               <Text style={styles.modalTitle}>{gallery ? '管理图库' : '添加图库'}</Text>
-              <Text style={styles.modalSubtitle}>{gallery ? `${gallery.name} · 调整文件夹、用户和识别任务` : '创建图库入口并绑定可浏览文件夹。'}</Text>
+              <Text style={styles.modalSubtitle}>{gallery ? `${gallery.name} · 调整文件夹、用户和识别任务` : '创建图库入口并绑定文件夹。'}</Text>
             </View>
             <Pressable onPress={onClose} style={styles.iconCloseButton}>
               <Ionicons color={MOBILE_SAGE_SLATE.muted} name="close-outline" size={20} />

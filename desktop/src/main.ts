@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -19,6 +19,11 @@ interface CacheRecord {
 
 interface CacheIndex {
   records: CacheRecord[];
+}
+
+interface CacheBlobFile {
+  fileName: string;
+  size: number;
 }
 
 /**
@@ -97,12 +102,15 @@ const registerIpcHandlers = (): void => {
   ipcMain.handle('kwphoto:cache:list-records', (_event, params: { scope?: string | null }) => {
     return listCacheRecords(params.scope ?? undefined);
   });
+  ipcMain.handle('kwphoto:cache:inspect', inspectCache);
   ipcMain.handle('kwphoto:cache:delete-folder', (_event, params: { folderScopeKey: string }) => {
     return deleteCacheRecords((record) => record.folderScopeKey === params.folderScopeKey);
   });
   ipcMain.handle('kwphoto:cache:clear', (_event, params: { scope?: string | null }) => {
     return deleteCacheRecords((record) => !params.scope || record.scope === params.scope);
   });
+  ipcMain.handle('kwphoto:cache:clear-unused', clearUnusedCachePayloads);
+  ipcMain.handle('kwphoto:cache:clear-all', clearEntireCacheStorage);
 };
 
 /**
@@ -199,6 +207,19 @@ const listCacheRecords = async (scope?: string): Promise<CacheRecord[]> => {
 };
 
 /**
+ * Inspects indexed records and blob files so the renderer can display useful and orphaned cache sizes.
+ */
+const inspectCache = async () => {
+  const inspection = await inspectCacheStorage();
+
+  return {
+    records: inspection.records,
+    unusedCount: inspection.unusedBlobFiles.length,
+    unusedSize: inspection.unusedBlobFiles.reduce((total, file) => total + file.size, 0),
+  };
+};
+
+/**
  * Deletes cache records matching the given predicate and removes their blob files.
  */
 const deleteCacheRecords = async (predicate: (record: CacheRecord) => boolean): Promise<void> => {
@@ -215,6 +236,82 @@ const deleteCacheRecords = async (predicate: (record: CacheRecord) => boolean): 
 
   index.records = index.records.filter((record) => !predicate(record));
   await writeCacheIndex(index);
+};
+
+/**
+ * Removes blob files that no cache index entry can reach, and drops metadata for missing blobs.
+ */
+const clearUnusedCachePayloads = async (): Promise<void> => {
+  const inspection = await inspectCacheStorage();
+  const staleRecordKeys = new Set(
+    inspection.records
+      .filter((record) => record.blobFileName && record.hasBlob === false)
+      .map((record) => record.key),
+  );
+
+  await Promise.all(
+    inspection.unusedBlobFiles.map((file) => rm(path.join(getCacheBlobsDir(), file.fileName), { force: true })),
+  );
+
+  if (staleRecordKeys.size > 0) {
+    await writeCacheIndex({
+      records: inspection.records.filter((record) => !staleRecordKeys.has(record.key)),
+    });
+  }
+};
+
+/**
+ * Removes the complete desktop cache root, including indexed records and orphaned blob files.
+ */
+const clearEntireCacheStorage = async (): Promise<void> => {
+  await rm(getCacheRootDir(), { force: true, recursive: true });
+  await mkdir(getCacheBlobsDir(), { recursive: true });
+  await writeCacheIndex({ records: [] });
+};
+
+/**
+ * Reads all blob files and annotates records whose payload disappeared from disk.
+ */
+const inspectCacheStorage = async (): Promise<{ records: CacheRecord[]; unusedBlobFiles: CacheBlobFile[] }> => {
+  await getCacheStorageInfo();
+
+  const index = await readCacheIndex();
+  const blobFiles = await listCacheBlobFiles();
+  const blobFileNames = new Set(blobFiles.map((file) => file.fileName));
+  const referencedBlobFileNames = new Set(
+    index.records
+      .map((record) => record.blobFileName)
+      .filter((fileName): fileName is string => Boolean(fileName)),
+  );
+
+  return {
+    records: index.records.map((record) => (
+      record.blobFileName
+        ? { ...record, hasBlob: blobFileNames.has(record.blobFileName) }
+        : record
+    )),
+    unusedBlobFiles: blobFiles.filter((file) => !referencedBlobFileNames.has(file.fileName)),
+  };
+};
+
+const listCacheBlobFiles = async (): Promise<CacheBlobFile[]> => {
+  try {
+    const entries = await readdir(getCacheBlobsDir(), { withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile());
+
+    return Promise.all(
+      files.map(async (entry) => {
+        const fileStat = await stat(path.join(getCacheBlobsDir(), entry.name));
+
+        return {
+          fileName: entry.name,
+          size: fileStat.size,
+        };
+      }),
+    );
+  } catch {
+    return [];
+  }
 };
 
 /**

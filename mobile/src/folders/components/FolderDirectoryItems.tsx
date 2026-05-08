@@ -28,7 +28,6 @@ import { useCachedMobileMediaUri } from "../../useCachedMobileMediaUri";
 import {
   LONG_PRESS_DELAY_MS,
   MAX_FOLDER_COVER_COUNT,
-  STATUS_COPY,
 } from "../folderConstants";
 import type { DirectorySelectionKey } from "../folderTypes";
 import {
@@ -254,21 +253,17 @@ export const FolderCard = ({
         ) : null}
         <View style={styles.folderStatusLine}>
           <View style={styles.folderStatusMain}>
-            <Text
-              style={[
-                styles.tag,
-                folder.trashCount > 0 || folder.status === "scanning"
-                  ? [
-                      styles.themeTag,
-                      { backgroundColor: theme.selection, color: theme.hex },
-                    ]
-                  : null,
-              ]}
-            >
-              {folder.trashCount > 0
-                ? `${folder.trashCount} 回收`
-                : STATUS_COPY[folder.status]}
-            </Text>
+            {folder.trashCount > 0 ? (
+              <Text
+                style={[
+                  styles.tag,
+                  styles.themeTag,
+                  { backgroundColor: theme.selection, color: theme.hex },
+                ]}
+              >
+                {folder.trashCount} 回收
+              </Text>
+            ) : null}
             {shouldMergeFolderMeta ? (
               <View style={[styles.folderMeta, styles.folderMetaInline]}>
                 <Text style={styles.folderMetaText}>

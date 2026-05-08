@@ -1,22 +1,24 @@
-import { ChevronDown, ChevronRight, Database, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronRight, Database, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 
 import {
-  clearLocalCache,
+  clearAllLocalCache,
+  clearUnusedLocalCache,
+  clearUsefulLocalCache,
   deleteLocalCacheFolderGroups,
   formatCacheSize,
   listLocalCacheFolders,
+  readLocalCacheStats,
   subscribeLocalCacheChanges,
 } from '../shared/local-cache';
-import type { LocalCacheFolderSummary } from '../shared/local-cache';
+import type { LocalCacheFolderSummary, LocalCacheStats } from '../shared/local-cache';
 
 interface CacheManagementPanelProps {
   cacheEnabled: boolean;
   description?: string;
   onShowToast: (message: string) => void;
   onToggleCache: (enabled: boolean) => void;
-  scope: string;
   title?: string;
 }
 
@@ -44,6 +46,23 @@ interface CacheFolderTreeNode {
   totals: CacheFolderTotals;
 }
 
+const EMPTY_CACHE_STATS: LocalCacheStats = {
+  coverCount: 0,
+  directoryCount: 0,
+  hdThumbnailCount: 0,
+  mediaCount: 0,
+  originalImageCount: 0,
+  originalVideoCount: 0,
+  thumbnailCount: 0,
+  totalCount: 0,
+  totalSize: 0,
+  unusedCount: 0,
+  unusedSize: 0,
+  usefulCount: 0,
+  usefulSize: 0,
+  videoPosterCount: 0,
+};
+
 /**
  * Displays local cache settings and folder-level cache usage.
  */
@@ -52,54 +71,33 @@ export const CacheManagementPanel = ({
   description = '只缓存已经加载过的目录、缩略图和预览资源。命中缓存时会先显示本地内容，再后台做差量更新。',
   onShowToast,
   onToggleCache,
-  scope,
   title = '本地缓存',
 }: CacheManagementPanelProps) => {
-  const [clearing, setClearing] = useState(false);
+  const [clearing, setClearing] = useState<'all' | 'unused' | 'useful' | ''>('');
+  const [cacheStats, setCacheStats] = useState<LocalCacheStats>(EMPTY_CACHE_STATS);
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() => new Set());
   const [folders, setFolders] = useState<LocalCacheFolderSummary[]>([]);
   const [loading, setLoading] = useState(false);
-  const totalSize = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.size, 0),
-    [folders],
-  );
-  const thumbnailCount = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.thumbnailCount, 0),
-    [folders],
-  );
-  const hdThumbnailCount = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.hdThumbnailCount, 0),
-    [folders],
-  );
-  const coverCount = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.coverCount, 0),
-    [folders],
-  );
-  const originalImageCount = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.originalImageCount, 0),
-    [folders],
-  );
-  const originalVideoCount = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.originalVideoCount, 0),
-    [folders],
-  );
-  const videoPosterCount = useMemo(
-    () => folders.reduce((sum, folder) => sum + folder.videoPosterCount, 0),
-    [folders],
-  );
   const folderTree = useMemo(() => buildCacheFolderTree(folders), [folders]);
 
   const refreshCacheFolders = useCallback(async (): Promise<void> => {
     setLoading(true);
 
     try {
-      setFolders(await listLocalCacheFolders(scope));
+      const [nextFolders, nextStats] = await Promise.all([
+        listLocalCacheFolders(),
+        readLocalCacheStats(),
+      ]);
+
+      setFolders(nextFolders);
+      setCacheStats(nextStats);
     } catch {
       setFolders([]);
+      setCacheStats(EMPTY_CACHE_STATS);
     } finally {
       setLoading(false);
     }
-  }, [scope]);
+  }, []);
 
   useEffect(() => {
     void refreshCacheFolders();
@@ -110,19 +108,53 @@ export const CacheManagementPanel = ({
   }, [refreshCacheFolders]);
 
   /**
-   * Clears every cache item under the current account and server scope.
+   * Clears indexed cache entries that can still be used by folders and previews.
    */
-  const handleClearAll = async (): Promise<void> => {
-    setClearing(true);
+  const handleClearUseful = async (): Promise<void> => {
+    setClearing('useful');
 
     try {
-      await clearLocalCache(scope);
+      await clearUsefulLocalCache();
       await refreshCacheFolders();
-      onShowToast('本地缓存已清理');
+      onShowToast('可用缓存已清理');
     } catch {
       onShowToast('清理缓存失败，请稍后重试');
     } finally {
-      setClearing(false);
+      setClearing('');
+    }
+  };
+
+  /**
+   * Clears orphaned desktop blobs and stale browser records without touching useful cache.
+   */
+  const handleClearUnused = async (): Promise<void> => {
+    setClearing('unused');
+
+    try {
+      await clearUnusedLocalCache();
+      await refreshCacheFolders();
+      onShowToast('残留缓存已清理');
+    } catch {
+      onShowToast('清理残留缓存失败，请稍后重试');
+    } finally {
+      setClearing('');
+    }
+  };
+
+  /**
+   * Clears indexed records and orphaned payloads in one action.
+   */
+  const handleClearAll = async (): Promise<void> => {
+    setClearing('all');
+
+    try {
+      await clearAllLocalCache();
+      await refreshCacheFolders();
+      onShowToast('全部缓存已清理');
+    } catch {
+      onShowToast('清理全部缓存失败，请稍后重试');
+    } finally {
+      setClearing('');
     }
   };
 
@@ -185,49 +217,84 @@ export const CacheManagementPanel = ({
           </button>
           <button
             className="danger-btn"
-            disabled={clearing || folders.length === 0}
+            disabled={Boolean(clearing) || cacheStats.usefulCount === 0}
+            onClick={() => void handleClearUseful()}
+            type="button"
+          >
+            <Trash2 size={15} />
+            {clearing === 'useful' ? '清理中' : '清理可用'}
+          </button>
+          <button
+            className="danger-btn"
+            disabled={Boolean(clearing) || cacheStats.unusedCount === 0}
+            onClick={() => void handleClearUnused()}
+            type="button"
+          >
+            <AlertCircle size={15} />
+            {clearing === 'unused' ? '清理中' : '清理残留'}
+          </button>
+          <button
+            className="danger-btn"
+            disabled={Boolean(clearing) || cacheStats.totalCount === 0}
             onClick={() => void handleClearAll()}
             type="button"
           >
             <Trash2 size={15} />
-            清理全部
+            {clearing === 'all' ? '清理中' : '清理全部'}
           </button>
         </div>
       </div>
 
-      <div className="cache-stats">
-        <article>
-          <span>缓存文件夹</span>
-          <strong>{folders.length}</strong>
-        </article>
-        <article>
-          <span>文件缩略图</span>
-          <strong>{thumbnailCount}</strong>
-        </article>
-        <article>
-          <span>高清缩略图</span>
-          <strong>{hdThumbnailCount}</strong>
-        </article>
-        <article>
-          <span>视频海报</span>
-          <strong>{videoPosterCount}</strong>
-        </article>
-        <article>
-          <span>文件夹封面</span>
-          <strong>{coverCount}</strong>
-        </article>
-        <article>
-          <span>原图</span>
-          <strong>{originalImageCount}</strong>
-        </article>
-        <article>
-          <span>原视频</span>
-          <strong>{originalVideoCount}</strong>
-        </article>
-        <article>
-          <span>占用空间</span>
-          <strong>{formatCacheSize(totalSize)}</strong>
-        </article>
+      <div className="cache-metrics">
+        <div className="cache-stats cache-stats--summary">
+          <article>
+            <span>总缓存</span>
+            <strong>{formatCacheSize(cacheStats.totalSize)}</strong>
+          </article>
+          <article>
+            <span>可用缓存</span>
+            <strong>{formatCacheSize(cacheStats.usefulSize)}</strong>
+          </article>
+          <article className="is-warning">
+            <span>残留缓存</span>
+            <strong>{formatCacheSize(cacheStats.unusedSize)}</strong>
+          </article>
+        </div>
+
+        <div className="cache-stats cache-stats--details">
+          <article>
+            <span>缓存文件夹</span>
+            <strong>{folders.length}</strong>
+          </article>
+          <article>
+            <span>文件缩略图</span>
+            <strong>{cacheStats.thumbnailCount}</strong>
+          </article>
+          <article>
+            <span>高清缩略图</span>
+            <strong>{cacheStats.hdThumbnailCount}</strong>
+          </article>
+          <article>
+            <span>视频海报</span>
+            <strong>{cacheStats.videoPosterCount}</strong>
+          </article>
+          <article>
+            <span>文件夹封面</span>
+            <strong>{cacheStats.coverCount}</strong>
+          </article>
+          <article>
+            <span>原图</span>
+            <strong>{cacheStats.originalImageCount}</strong>
+          </article>
+          <article>
+            <span>原视频</span>
+            <strong>{cacheStats.originalVideoCount}</strong>
+          </article>
+          <article>
+            <span>残留资源</span>
+            <strong>{cacheStats.unusedCount}</strong>
+          </article>
+        </div>
       </div>
 
       <div className="cache-list">
@@ -241,7 +308,11 @@ export const CacheManagementPanel = ({
         {!loading && folders.length === 0 ? (
           <div className="cache-state">
             <Database size={20} />
-            <span>还没有缓存。打开文件夹、缩略图或预览原图后会自动记录。</span>
+            <span>
+              {cacheStats.unusedCount > 0
+                ? '没有可用缓存目录，当前仅检测到残留缓存。'
+                : '还没有缓存。打开文件夹、缩略图或预览原图后会自动记录。'}
+            </span>
           </div>
         ) : null}
 

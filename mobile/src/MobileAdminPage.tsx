@@ -68,8 +68,8 @@ import {
 
 import {
   clearAllMobileLocalCache,
-  clearMobileLocalCache,
-  createMobileLocalCacheScope,
+  clearUnusedMobileLocalCache,
+  clearUsefulMobileLocalCache,
   deleteMobileCacheFolderGroups,
   readMobileCacheStats,
   subscribeMobileCacheChanges,
@@ -150,15 +150,6 @@ export const MobileAdminPage = ({
     serverUrl: session.serverUrl,
     tokens: session.tokens,
   });
-  const cacheScope = useMemo(
-    () =>
-      createMobileLocalCacheScope({
-        serverUrl: session.serverUrl,
-        userId: session.user.id,
-        username: session.user.username,
-      }),
-    [session.serverUrl, session.user.id, session.user.username],
-  );
   const cacheStatsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const loadRequestIdRef = useRef(0);
   const taskOverviewPollingInFlightRef = useRef(false);
@@ -234,8 +225,8 @@ export const MobileAdminPage = ({
     const preferences = await readMobilePreferences();
 
     setCacheEnabled(preferences.localCacheEnabled ?? true);
-    setCacheStats(await readMobileCacheStats(cacheScope));
-  }, [cacheScope]);
+    setCacheStats(await readMobileCacheStats());
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -276,7 +267,7 @@ export const MobileAdminPage = ({
       }
 
       cacheStatsRefreshTimerRef.current = setTimeout(() => {
-        void readMobileCacheStats(cacheScope).then((nextStats) => {
+        void readMobileCacheStats().then((nextStats) => {
           if (mounted) {
             setCacheStats(nextStats);
           }
@@ -294,7 +285,7 @@ export const MobileAdminPage = ({
         clearTimeout(cacheStatsRefreshTimerRef.current);
       }
     };
-  }, [cacheScope]);
+  }, []);
 
   /**
    * Changes the active admin tab and persists it as a mobile behavior preference.
@@ -776,13 +767,24 @@ export const MobileAdminPage = ({
   };
 
   /**
-   * Clears all cache records under the current mobile account scope.
+   * Clears indexed mobile cache records that are still reusable.
    */
-  const handleClearCache = async (): Promise<void> => {
-    await runAdminAction('clear-cache', async () => {
-      await clearMobileLocalCache(cacheScope);
+  const handleClearUsefulCache = async (): Promise<void> => {
+    await runAdminAction('clear-useful-cache', async () => {
+      await clearUsefulMobileLocalCache();
       await loadCachePreferences();
-      return '本账号缓存已清理';
+      return '可用缓存已清理';
+    });
+  };
+
+  /**
+   * Clears orphaned and legacy mobile cache payloads.
+   */
+  const handleClearUnusedCache = async (): Promise<void> => {
+    await runAdminAction('clear-unused-cache', async () => {
+      await clearUnusedMobileLocalCache();
+      await loadCachePreferences();
+      return '残留缓存已清理';
     });
   };
 
@@ -793,7 +795,7 @@ export const MobileAdminPage = ({
     await runAdminAction('clear-all-mobile-cache', async () => {
       await clearAllMobileLocalCache();
       await loadCachePreferences();
-      return '全部移动端缓存已清理';
+      return '全部缓存已清理';
     });
   };
 
@@ -951,10 +953,10 @@ export const MobileAdminPage = ({
               <CachePanel
                 actionLoading={actionLoading}
                 cacheEnabled={cacheEnabled}
-                cacheScope={cacheScope}
                 stats={cacheStats}
                 onClearAllCache={handleClearAllMobileCache}
-                onClearCache={handleClearCache}
+                onClearUnusedCache={handleClearUnusedCache}
+                onClearUsefulCache={handleClearUsefulCache}
                 onClearFolderBranch={handleClearCacheFolderBranch}
                 onRefreshCache={loadCachePreferences}
                 onToggleCache={handleToggleCache}

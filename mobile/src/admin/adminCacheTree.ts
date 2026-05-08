@@ -33,6 +33,12 @@ export const createEmptyCacheStats = (): MobileCacheStats => ({
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
+  totalCount: 0,
+  totalSize: 0,
+  unusedCount: 0,
+  unusedSize: 0,
+  usefulCount: 0,
+  usefulSize: 0,
   videoPosterCount: 0,
 });
 

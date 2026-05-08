@@ -3,7 +3,6 @@ import type { ComponentProps } from 'react';
 
 import type {
   FileMoveOverwriteMode,
-  FolderSummary,
 } from '@kwphoto/core';
 
 import type {
@@ -28,12 +27,6 @@ export const PREVIEW_NOTICE_DURATION_MS = 2200;
 export const PREVIEW_SWIPE_CLOSE_DISTANCE = 58;
 export const PREVIEW_SWIPE_DIRECTION_RATIO = 1.12;
 export const PREVIEW_SWIPE_STEP_DISTANCE = 46;
-
-export const STATUS_COPY: Record<FolderSummary['status'], string> = {
-  empty: '空文件夹',
-  ready: '可浏览',
-  scanning: '扫描中',
-};
 
 export const SORT_FIELD_LABEL: Record<MobileFolderSortField, string> = {
   fileName: '文件名',
