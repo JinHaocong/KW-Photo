@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron';
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -7,6 +7,14 @@ import process from 'node:process';
 let mainWindow: BrowserWindow | undefined;
 
 const WEB_DEV_SERVER_URL = process.env.KWPHOTO_WEB_DEV_SERVER_URL;
+const DEFAULT_WINDOW_WIDTH = 1440;
+const DEFAULT_WINDOW_HEIGHT = 920;
+const MIN_WINDOW_WIDTH = 1080;
+const MIN_WINDOW_HEIGHT = 680;
+const WINDOW_STATE_SAVE_DELAY = 300;
+const WINDOW_STATE_FILE_NAME = 'window-state.json';
+
+let windowStateSaveTimer: NodeJS.Timeout | undefined;
 
 interface CacheRecord {
   blobFileName?: string;
@@ -26,15 +34,22 @@ interface CacheBlobFile {
   size: number;
 }
 
+interface WindowState {
+  height: number;
+  width: number;
+}
+
 /**
  * Creates the main application window and attaches the hardened preload bridge.
  */
 const createMainWindow = async (): Promise<void> => {
+  const windowState = await readWindowState();
+
   mainWindow = new BrowserWindow({
     backgroundColor: '#f7f8f4',
-    height: 820,
-    minHeight: 680,
-    minWidth: 1080,
+    height: windowState.height,
+    minHeight: MIN_WINDOW_HEIGHT,
+    minWidth: MIN_WINDOW_WIDTH,
     show: false,
     title: 'KW Photo',
     webPreferences: {
@@ -43,8 +58,10 @@ const createMainWindow = async (): Promise<void> => {
       preload: getPreloadPath(),
       sandbox: false,
     },
-    width: 1280,
+    width: windowState.width,
   });
+
+  registerWindowStatePersistence(mainWindow);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
@@ -77,6 +94,109 @@ const getPreloadPath = (): string => {
 const getRendererIndexPath = (): string => {
   return path.join(app.getAppPath(), 'dist', 'renderer', 'index.html');
 };
+
+/**
+ * Reads the persisted window size and clamps it to the current display.
+ */
+const readWindowState = async (): Promise<WindowState> => {
+  try {
+    const content = await readFile(getWindowStatePath(), 'utf8');
+    const parsed = JSON.parse(content) as Partial<WindowState>;
+
+    return normalizeWindowState(parsed);
+  } catch {
+    return getDefaultWindowState();
+  }
+};
+
+/**
+ * Watches user resize actions and persists the latest usable window size.
+ */
+const registerWindowStatePersistence = (window: BrowserWindow): void => {
+  window.on('resize', () => {
+    if (window.isDestroyed()) {
+      return;
+    }
+
+    if (windowStateSaveTimer) {
+      clearTimeout(windowStateSaveTimer);
+    }
+
+    windowStateSaveTimer = setTimeout(() => {
+      void writeWindowState(window).catch(() => undefined);
+      windowStateSaveTimer = undefined;
+    }, WINDOW_STATE_SAVE_DELAY);
+  });
+
+  window.on('close', () => {
+    if (windowStateSaveTimer) {
+      clearTimeout(windowStateSaveTimer);
+      windowStateSaveTimer = undefined;
+    }
+
+    void writeWindowState(window).catch(() => undefined);
+  });
+
+  window.on('closed', () => {
+    if (windowStateSaveTimer) {
+      clearTimeout(windowStateSaveTimer);
+      windowStateSaveTimer = undefined;
+    }
+  });
+};
+
+/**
+ * Persists the current normal window size.
+ */
+const writeWindowState = async (window: BrowserWindow): Promise<void> => {
+  if (window.isDestroyed() || window.isMinimized() || window.isMaximized() || window.isFullScreen()) {
+    return;
+  }
+
+  const bounds = window.getBounds();
+  const state = normalizeWindowState({
+    height: bounds.height,
+    width: bounds.width,
+  });
+
+  await mkdir(app.getPath('userData'), { recursive: true });
+  await writeFile(getWindowStatePath(), JSON.stringify(state), 'utf8');
+};
+
+/**
+ * Returns a safe default window size for first launch.
+ */
+const getDefaultWindowState = (): WindowState => {
+  return normalizeWindowState({
+    height: DEFAULT_WINDOW_HEIGHT,
+    width: DEFAULT_WINDOW_WIDTH,
+  });
+};
+
+/**
+ * Ensures saved dimensions are valid and fit on the active display.
+ */
+const normalizeWindowState = (state: Partial<WindowState>): WindowState => {
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const maxWidth = Math.max(MIN_WINDOW_WIDTH, workArea.width);
+  const maxHeight = Math.max(MIN_WINDOW_HEIGHT, workArea.height);
+
+  return {
+    height: clampWindowSize(state.height, MIN_WINDOW_HEIGHT, maxHeight, DEFAULT_WINDOW_HEIGHT),
+    width: clampWindowSize(state.width, MIN_WINDOW_WIDTH, maxWidth, DEFAULT_WINDOW_WIDTH),
+  };
+};
+
+/**
+ * Clamps a persisted size to the supported window range.
+ */
+const clampWindowSize = (value: unknown, min: number, max: number, fallback: number): number => {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(Math.max(Math.round(value), min), max)
+    : Math.min(Math.max(fallback, min), max);
+};
+
+const getWindowStatePath = (): string => path.join(app.getPath('userData'), WINDOW_STATE_FILE_NAME);
 
 /**
  * Registers the narrow desktop bridge exposed to the renderer.
