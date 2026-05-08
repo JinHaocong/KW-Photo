@@ -36,6 +36,7 @@ interface AppShellProps {
 const LIBRARY_PAGES: WorkspacePage[] = ['photos', 'recent', 'albums', 'folders', 'people', 'map'];
 const ACTION_PAGES: WorkspacePage[] = ['search', 'tags', 'upload', 'share', 'trash', 'hidden'];
 const SYSTEM_PAGES: WorkspacePage[] = ['admin', 'settings'];
+const APP_ICON_SRC = `${import.meta.env.BASE_URL}app-icon.svg`;
 
 /**
  * Renders the desktop workspace shell shared by Web and Electron targets.
@@ -106,7 +107,7 @@ export const AppShell = ({
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <img src="/app-icon.svg" alt="KW Photo" className="brand-mark" />
+          <img src={APP_ICON_SRC} alt="KW Photo" className="brand-mark" />
           <div>
             <h1>KW Photo</h1>
             <p>Desktop workspace</p>
