@@ -35,6 +35,7 @@ const App = () => {
   const sessionStatus = useSessionStore((state) => state.status);
   const tokens = useSessionStore((state) => state.tokens);
   const user = useSessionStore((state) => state.user);
+  const splashVisible = sessionStatus === 'booting' || (sessionStatus === 'checking' && Boolean(tokens?.refreshToken));
   const initialWorkspacePreferences = useMemo(() => loadWorkspacePreferences(), []);
   const [activePage, setActivePage] = useState<WorkspacePage>(initialWorkspacePreferences.activePage);
   const [activeTheme, setActiveTheme] = useState<ThemeName>(initialWorkspacePreferences.activeTheme);
@@ -47,6 +48,7 @@ const App = () => {
   const [shareOpen, setShareOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [splashMounted, setSplashMounted] = useState(splashVisible);
   const [toast, setToast] = useState('');
   const {
     closeUpload,
@@ -104,6 +106,21 @@ const App = () => {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    if (splashVisible) {
+      setSplashMounted(true);
+      return undefined;
+    }
+
+    if (!splashMounted) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setSplashMounted(false), 260);
+
+    return () => window.clearTimeout(timer);
+  }, [splashMounted, splashVisible]);
 
   useEffect(() => {
     applyTheme(activeTheme);
@@ -210,20 +227,28 @@ const App = () => {
     logout();
   };
 
-  if (sessionStatus === 'booting' || (sessionStatus === 'checking' && tokens?.refreshToken)) {
-    return <SplashScreen />;
+  if (sessionStatus === 'booting') {
+    return (
+      <>
+        <main className="app-boot-underlay" />
+        {splashMounted ? <SplashScreen visible={splashVisible} /> : null}
+      </>
+    );
   }
 
   if (sessionStatus !== 'authenticated') {
     return (
-      <ConnectionGate
-        apiInfo={apiInfo}
-        defaultServerUrl={serverUrl}
-        error={error}
-        onConnect={connect}
-        onLogin={login}
-        status={sessionStatus}
-      />
+      <>
+        <ConnectionGate
+          apiInfo={apiInfo}
+          defaultServerUrl={serverUrl}
+          error={error}
+          onConnect={connect}
+          onLogin={login}
+          status={sessionStatus}
+        />
+        {splashMounted ? <SplashScreen visible={splashVisible} /> : null}
+      </>
     );
   }
 
@@ -300,6 +325,7 @@ const App = () => {
           {toast}
         </div>
       ) : null}
+      {splashMounted ? <SplashScreen visible={splashVisible} /> : null}
     </>
   );
 };

@@ -104,8 +104,32 @@ button:disabled {
 .splash-screen {
   display: grid;
   gap: 10px;
+  inset: 0;
+  opacity: 0.98;
+  pointer-events: auto;
   place-content: center;
   justify-items: center;
+  position: fixed;
+  transition:
+    opacity 260ms var(--ease),
+    visibility 260ms var(--ease);
+  visibility: visible;
+  z-index: 1000;
+}
+
+.splash-screen--visible {
+  opacity: 0.98;
+}
+
+.splash-screen--hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.app-boot-underlay {
+  min-height: 100vh;
+  background: var(--page-bg);
 }
 
 .splash-screen strong {

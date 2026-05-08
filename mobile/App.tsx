@@ -1,6 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -48,10 +47,15 @@ import {
   MOBILE_THEME_TOKENS,
 } from './src/mobile-theme';
 import type { MobileSession } from './src/mobile-types';
+import { MobileFadingOverlay } from './src/components/MobileFadingOverlay';
 import { MobileWorkspace } from './src/MobileWorkspace';
 
 const DEFAULT_THEME = MOBILE_THEME_TOKENS[DEFAULT_MOBILE_THEME];
 const queryClient = new QueryClient();
+const BOOT_OVERLAY_FADE_DURATION_MS = 260;
+const BOOT_OVERLAY_VISIBLE_OPACITY = 0.98;
+const PRIVACY_OVERLAY_FADE_DURATION_MS = 220;
+const PRIVACY_OVERLAY_VISIBLE_OPACITY = 0.98;
 
 type StartupPhase = 'reading' | 'validating' | 'ready';
 
@@ -80,6 +84,9 @@ export default function App() {
     [activeTheme],
   );
   const busy = Boolean(loadingAction);
+  const bootOverlayVisible = startupPhase !== 'ready';
+  const bootOverlayPhase: Exclude<StartupPhase, 'ready'> =
+    startupPhase === 'ready' ? 'validating' : startupPhase;
 
   useEffect(() => {
     let mounted = true;
@@ -309,16 +316,6 @@ export default function App() {
     await mergeMobilePreferences({ serverUrl: normalizedUrl });
   }, [session]);
 
-  if (startupPhase !== 'ready') {
-    return (
-      <MobileBootScreen
-        phase={startupPhase}
-        privacyScreenVisible={privacyScreenVisible}
-        theme={activeThemeToken}
-      />
-    );
-  }
-
   const safeAreaEdges = session ? (['top', 'left', 'right'] as const) : undefined;
 
   return (
@@ -468,7 +465,12 @@ export default function App() {
               )}
             </KeyboardAvoidingView>
           </SafeAreaView>
-          <MobilePrivacyScreen visible={privacyScreenVisible} />
+          <MobileBootScreen
+            phase={bootOverlayPhase}
+            theme={activeThemeToken}
+            visible={bootOverlayVisible}
+          />
+          <MobilePrivacyScreen theme={activeThemeToken} visible={privacyScreenVisible} />
         </View>
       </SafeAreaProvider>
     </QueryClientProvider>
@@ -477,7 +479,12 @@ export default function App() {
 
 interface MobileBootScreenProps {
   phase: Exclude<StartupPhase, 'ready'>;
-  privacyScreenVisible: boolean;
+  theme: typeof DEFAULT_THEME;
+  visible: boolean;
+}
+
+interface MobileOverlayBackgroundProps {
+  children?: ReactNode;
   theme: typeof DEFAULT_THEME;
 }
 
@@ -495,31 +502,44 @@ const BOOT_COPY: Record<Exclude<StartupPhase, 'ready'>, { description: string; t
 /**
  * Renders the native boot screen while mobile restores and validates a saved session.
  */
-const MobileBootScreen = ({ phase, privacyScreenVisible, theme }: MobileBootScreenProps) => {
+const MobileBootScreen = ({ phase, theme, visible }: MobileBootScreenProps) => {
   const copy = BOOT_COPY[phase];
 
   return (
-    <SafeAreaProvider>
-      <View style={styles.appFrame}>
-        <LinearGradient
-          colors={['#fff', 'rgb(252, 252, 252)', MOBILE_SAGE_NEUTRALS.pageBg]}
-          end={{ x: 1, y: 1 }}
-          locations={[0, 0.48, 1]}
-          start={{ x: 0, y: 0 }}
-          style={styles.bootBackground}
-        >
-          <BootRadialHighlight color={theme.selection} />
-          <SafeAreaView style={styles.bootSafeArea}>
-            <View style={styles.bootPanel}>
-              <Text style={styles.bootBrandText}>MT</Text>
-              <Text style={styles.bootTitle}>{copy.title}</Text>
-              <Text style={styles.bootDescription}>{copy.description}</Text>
-            </View>
-          </SafeAreaView>
-        </LinearGradient>
-        <MobilePrivacyScreen visible={privacyScreenVisible} />
-      </View>
-    </SafeAreaProvider>
+    <MobileFadingOverlay
+      exitDurationMs={BOOT_OVERLAY_FADE_DURATION_MS}
+      style={styles.bootScreen}
+      visible={visible}
+      visibleOpacity={BOOT_OVERLAY_VISIBLE_OPACITY}
+    >
+      <MobileOverlayBackground theme={theme}>
+        <SafeAreaView style={styles.bootSafeArea}>
+          <View style={styles.bootPanel}>
+            <Text style={styles.bootBrandText}>MT</Text>
+            <Text style={styles.bootTitle}>{copy.title}</Text>
+            <Text style={styles.bootDescription}>{copy.description}</Text>
+          </View>
+        </SafeAreaView>
+      </MobileOverlayBackground>
+    </MobileFadingOverlay>
+  );
+};
+
+/**
+ * Provides the shared recovery/privacy overlay background for native mobile.
+ */
+const MobileOverlayBackground = ({ children, theme }: MobileOverlayBackgroundProps) => {
+  return (
+    <LinearGradient
+      colors={['#fff', 'rgb(252, 252, 252)', MOBILE_SAGE_NEUTRALS.pageBg]}
+      end={{ x: 1, y: 1 }}
+      locations={[0, 0.48, 1]}
+      start={{ x: 0, y: 0 }}
+      style={styles.bootBackground}
+    >
+      <BootRadialHighlight color={theme.selection} />
+      {children}
+    </LinearGradient>
   );
 };
 
@@ -544,21 +564,17 @@ const BootRadialHighlight = ({ color }: { color: string }) => {
 /**
  * Covers all mobile content when the app leaves the foreground.
  */
-const MobilePrivacyScreen = ({ visible }: { visible: boolean }) => {
-  if (!visible) {
-    return null;
-  }
-
+const MobilePrivacyScreen = ({ theme, visible }: { theme: typeof DEFAULT_THEME; visible: boolean }) => {
   return (
-    <View pointerEvents="auto" style={styles.privacyScreen}>
-      <BlurView
-        experimentalBlurMethod="dimezisBlurView"
-        intensity={100}
-        style={styles.privacyBlur}
-        tint="light"
-      />
-      <View style={styles.privacyTint} />
-    </View>
+    <MobileFadingOverlay
+      enterDurationMs={80}
+      exitDurationMs={PRIVACY_OVERLAY_FADE_DURATION_MS}
+      style={styles.privacyScreen}
+      visible={visible}
+      visibleOpacity={PRIVACY_OVERLAY_VISIBLE_OPACITY}
+    >
+      <MobileOverlayBackground theme={theme} />
+    </MobileFadingOverlay>
   );
 };
 
@@ -749,6 +765,12 @@ const styles = StyleSheet.create({
   bootRadialHighlight: {
     ...StyleSheet.absoluteFillObject,
   },
+  bootScreen: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: MOBILE_SAGE_NEUTRALS.pageBg,
+    elevation: 900,
+    zIndex: 900,
+  },
   bootTitle: {
     color: MOBILE_SAGE_SLATE.title,
     fontSize: 18,
@@ -887,18 +909,11 @@ const styles = StyleSheet.create({
   pressedButton: {
     transform: [{ translateY: 1 }],
   },
-  privacyBlur: {
-    ...StyleSheet.absoluteFillObject,
-  },
   privacyScreen: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(248, 250, 252, 0.22)',
-    elevation: 999,
-    zIndex: 999,
-  },
-  privacyTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.pageBg,
+    elevation: 1000,
+    zIndex: 1000,
   },
   primaryButton: {
     alignItems: 'center',

@@ -195,6 +195,7 @@ import { styles } from "./folders/folderStyles";
 import {
   MobileFullscreenModal,
 } from "./components/MobileDialog";
+import { MobileFadingOverlay } from "./components/MobileFadingOverlay";
 import ImageView from "./MobileImageView";
 import { useCachedMobileMediaUri } from "./useCachedMobileMediaUri";
 import { useMobileApiOptions } from "./useMobileApiOptions";
@@ -246,6 +247,8 @@ interface PreviewDisplayedImageUriState {
 
 const FOLDER_CONTENT_BOTTOM_TABBAR_PADDING = 132;
 const FOLDER_CONTENT_BOTTOM_TABBAR_SAFE_AREA_OFFSET = 98;
+const FOLDER_RESTORE_OVERLAY_DELAY_MS = 180;
+const FOLDER_RESTORE_OVERLAY_FADE_DURATION_MS = 220;
 const INFUSE_APP_ICON_SOURCE = require("../assets/infuse-icon.jpg");
 
 const FolderStack = createNativeStackNavigator<MobileFolderStackParamList>();
@@ -309,6 +312,7 @@ export const MobileFoldersHome = ({
   const [initialDirectory, setInitialDirectory] = useState<FolderDirectory>();
   const [initialFolderId, setInitialFolderId] = useState<number>();
   const [preferencesHydrated, setPreferencesHydrated] = useState(false);
+  const [restoreOverlayAllowed, setRestoreOverlayAllowed] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -352,42 +356,63 @@ export const MobileFoldersHome = ({
     };
   }, []);
 
-  if (!preferencesHydrated) {
-    return (
-      <MobileLoadingState
-        description="恢复上次打开的目录和视图偏好"
-        icon="folder-open-outline"
-        title="正在恢复文件夹"
-      />
-    );
-  }
+  useEffect(() => {
+    if (preferencesHydrated) {
+      setRestoreOverlayAllowed(false);
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      setRestoreOverlayAllowed(true);
+    }, FOLDER_RESTORE_OVERLAY_DELAY_MS);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [preferencesHydrated]);
 
   return (
-    <NavigationContainer theme={FOLDER_NAVIGATION_THEME}>
-      <FolderStack.Navigator screenOptions={FOLDER_STACK_SCREEN_OPTIONS}>
-        <FolderStack.Screen
-          name="directory"
-          initialParams={{ folderId: initialFolderId }}
-        >
-          {({ navigation, route }) => (
-            <MobileFolderDirectoryScreen
-              navigation={navigation}
-              externalVideoPlayer={externalVideoPlayer}
-              initialDirectory={
-                route.params?.folderId === initialFolderId
-                  ? initialDirectory
-                  : undefined
-              }
-              onChangeTokens={onChangeTokens}
-              onLogout={onLogout}
-              rootRequestVersion={rootRequestVersion}
-              route={route}
-              session={session}
-            />
-          )}
-        </FolderStack.Screen>
-      </FolderStack.Navigator>
-    </NavigationContainer>
+    <View style={styles.folderHomeFrame}>
+      {preferencesHydrated ? (
+        <NavigationContainer theme={FOLDER_NAVIGATION_THEME}>
+          <FolderStack.Navigator screenOptions={FOLDER_STACK_SCREEN_OPTIONS}>
+            <FolderStack.Screen
+              name="directory"
+              initialParams={{ folderId: initialFolderId }}
+            >
+              {({ navigation, route }) => (
+                <MobileFolderDirectoryScreen
+                  navigation={navigation}
+                  externalVideoPlayer={externalVideoPlayer}
+                  initialDirectory={
+                    route.params?.folderId === initialFolderId
+                      ? initialDirectory
+                      : undefined
+                  }
+                  onChangeTokens={onChangeTokens}
+                  onLogout={onLogout}
+                  rootRequestVersion={rootRequestVersion}
+                  route={route}
+                  session={session}
+                />
+              )}
+            </FolderStack.Screen>
+          </FolderStack.Navigator>
+        </NavigationContainer>
+      ) : null}
+      <MobileFadingOverlay
+        exitDurationMs={FOLDER_RESTORE_OVERLAY_FADE_DURATION_MS}
+        style={styles.folderRestoreOverlay}
+        visible={!preferencesHydrated && restoreOverlayAllowed}
+      >
+        <MobileLoadingState
+          description="恢复上次打开的目录和视图偏好"
+          icon="folder-open-outline"
+          theme={theme}
+          title="正在恢复文件夹"
+        />
+      </MobileFadingOverlay>
+    </View>
   );
 };
 

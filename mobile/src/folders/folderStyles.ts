@@ -853,6 +853,17 @@ export const styles = StyleSheet.create({
   folderHeadingSection: {
     marginBottom: 4,
   },
+  folderHomeFrame: {
+    backgroundColor: MOBILE_SAGE_NEUTRALS.pageBg,
+    flex: 1,
+  },
+  folderRestoreOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: MOBILE_SAGE_NEUTRALS.pageBg,
+    elevation: 20,
+    justifyContent: "center",
+    zIndex: 20,
+  },
   folderGridRow: {
     columnGap: FOLDER_GRID_GAP,
     flexDirection: "row",
@@ -875,15 +886,21 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     width: undefined,
   },
-  folderMetaText: {
+  folderMetaPill: {
+    alignItems: "center",
     backgroundColor: MOBILE_SAGE_NEUTRALS.control,
     borderRadius: 999,
-    color: MOBILE_SAGE_SLATE.muted,
-    fontSize: 10,
-    fontWeight: "800",
+    flexDirection: "row",
+    gap: 3,
     overflow: "hidden",
     paddingHorizontal: 8,
     paddingVertical: 5,
+  },
+  folderMetaPillText: {
+    color: MOBILE_SAGE_SLATE.muted,
+    fontSize: 10,
+    fontWeight: "900",
+    lineHeight: 12,
   },
   folderStatusLine: {
     alignItems: "center",
@@ -1753,6 +1770,27 @@ export const styles = StyleSheet.create({
     fontSize: 9,
     paddingHorizontal: 5,
     right: 5,
+  },
+  smallFolderActionsToggle: {
+    height: 22,
+    width: 22,
+  },
+  smallFolderMeta: {
+    flexWrap: "nowrap",
+    gap: 3,
+  },
+  smallFolderMetaPill: {
+    flexShrink: 0,
+    gap: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+  },
+  smallFolderMetaPillText: {
+    fontSize: 9,
+    lineHeight: 11,
+  },
+  smallFolderStatusLine: {
+    gap: 4,
   },
   tag: {
     backgroundColor: MOBILE_SAGE_NEUTRALS.control,

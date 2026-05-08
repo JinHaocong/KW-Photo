@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { BlurView } from 'expo-blur';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MobileAdminPage } from './MobileAdminPage';
@@ -30,6 +30,9 @@ import type { MobileThemeToken } from './mobile-theme';
 import type { MobilePage, MobileSession } from './mobile-types';
 
 type TabIconName = ComponentProps<typeof Ionicons>['name'];
+
+const TABBAR_ITEM_GAP = 4;
+const TABBAR_SLIDER_ANIMATION_MS = 220;
 
 interface MobileWorkspaceProps {
   initialActiveTheme: MobileThemeName;
@@ -62,8 +65,10 @@ export const MobileWorkspace = ({
     () => normalizeMobileMenuPages(undefined, session.user.isAdmin),
   );
   const [preferencesHydrated, setPreferencesHydrated] = useState(false);
+  const [tabbarContentWidth, setTabbarContentWidth] = useState(0);
   const initialActiveThemeRef = useRef(initialActiveTheme);
   const onChangeRootThemeRef = useRef(onChangeRootTheme);
+  const tabbarSliderX = useRef(new Animated.Value(0)).current;
   const activeThemeToken = MOBILE_THEME_TOKENS[activeTheme];
   const shouldRenderFolders = activePage === 'folders' || foldersMounted;
   const activePageUsesPlaceholder = !['folders', 'admin', 'settings'].includes(activePage);
@@ -74,18 +79,34 @@ export const MobileWorkspace = ({
       ),
     [mobileMenuPages, session.user.isAdmin],
   );
+  const activeNavIndex = useMemo(
+    () => Math.max(0, visibleNavItems.findIndex((item) => item.key === activePage)),
+    [activePage, visibleNavItems],
+  );
+  const tabbarSliderGeometry = useMemo(
+    () => getTabbarSliderGeometry(visibleNavItems.length, tabbarContentWidth, activeNavIndex),
+    [activeNavIndex, tabbarContentWidth, visibleNavItems.length],
+  );
   const tabbarSafeAreaStyle = useMemo(
     () => ({
       paddingBottom: Math.max(10, safeAreaInsets.bottom - 10),
     }),
     [safeAreaInsets.bottom],
   );
-  const activeTabbarItemStyle = useMemo(
+  const tabbarSliderStyle = useMemo(
     () => ({
       backgroundColor: hexToRgba(activeThemeToken.selection, 0.54),
       borderColor: hexToRgba(activeThemeToken.light, 0.58),
+      opacity: tabbarSliderGeometry.width > 0 ? 1 : 0,
+      transform: [{ translateX: tabbarSliderX }],
+      width: tabbarSliderGeometry.width,
     }),
-    [activeThemeToken.light, activeThemeToken.selection],
+    [
+      activeThemeToken.light,
+      activeThemeToken.selection,
+      tabbarSliderGeometry.width,
+      tabbarSliderX,
+    ],
   );
 
   useEffect(() => {
@@ -150,6 +171,15 @@ export const MobileWorkspace = ({
     }
   }, [activePage, mobileMenuPages, preferencesHydrated, session.user.isAdmin]);
 
+  useEffect(() => {
+    Animated.timing(tabbarSliderX, {
+      duration: TABBAR_SLIDER_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+      toValue: tabbarSliderGeometry.x,
+      useNativeDriver: true,
+    }).start();
+  }, [tabbarSliderGeometry.x, tabbarSliderX]);
+
   /**
    * Switches bottom tabs through local state; folder drill-down owns native transitions separately.
    */
@@ -199,6 +229,13 @@ export const MobileWorkspace = ({
   const handleChangeExternalVideoPlayer = (player: MobileExternalVideoPlayer): void => {
     setExternalVideoPlayer(player);
     void mergeMobilePreferences({ externalVideoPlayer: player });
+  };
+
+  /**
+   * Records the real tabbar width so the slider can match flexible menu counts.
+   */
+  const handleTabbarContentLayout = (event: LayoutChangeEvent): void => {
+    setTabbarContentWidth(event.nativeEvent.layout.width);
   };
 
   if (!preferencesHydrated) {
@@ -260,7 +297,11 @@ export const MobileWorkspace = ({
             style={[styles.tabbarGlass, tabbarSafeAreaStyle]}
             tint="default"
           >
-            <View style={styles.tabbarContent}>
+            <View onLayout={handleTabbarContentLayout} style={styles.tabbarContent}>
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.tabbarSlider, tabbarSliderStyle]}
+              />
               {visibleNavItems.map((item) => (
                 <Pressable
                   key={item.key}
@@ -268,7 +309,6 @@ export const MobileWorkspace = ({
                   style={[
                     styles.tabbarItem,
                     activePage === item.key ? styles.activeTabbarItem : null,
-                    activePage === item.key ? activeTabbarItemStyle : null,
                   ]}
                 >
                   <Ionicons
@@ -317,6 +357,25 @@ const MOBILE_PAGE_DESCRIPTIONS: Record<MobilePage, string> = {
  */
 const getFallbackMobilePage = (pages: MobilePage[]): MobilePage => {
   return pages[0] ?? 'settings';
+};
+
+/**
+ * Calculates the active pill width and horizontal offset for a flex tabbar.
+ */
+const getTabbarSliderGeometry = (itemCount: number, contentWidth: number, activeIndex: number): {
+  width: number;
+  x: number;
+} => {
+  if (itemCount <= 0 || contentWidth <= 0) {
+    return { width: 0, x: 0 };
+  }
+
+  const itemWidth = (contentWidth - TABBAR_ITEM_GAP * (itemCount - 1)) / itemCount;
+
+  return {
+    width: Math.max(0, itemWidth),
+    x: Math.max(0, activeIndex) * (itemWidth + TABBAR_ITEM_GAP),
+  };
 };
 
 /**
@@ -380,8 +439,7 @@ const MobileModulePlaceholder = ({
 
 const styles = StyleSheet.create({
   activeTabbarItem: {
-    backgroundColor: MOBILE_SAGE_NEUTRALS.controlActive,
-    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    zIndex: 1,
   },
   bootPanel: {
     alignItems: 'center',
@@ -504,7 +562,8 @@ const styles = StyleSheet.create({
   tabbarContent: {
     alignSelf: 'center',
     flexDirection: 'row',
-    gap: 4,
+    gap: TABBAR_ITEM_GAP,
+    position: 'relative',
     width: '100%',
   },
   tabbarItem: {
@@ -519,11 +578,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 5,
     paddingVertical: 5,
+    zIndex: 1,
   },
   tabbarLabel: {
     color: MOBILE_SAGE_SLATE.muted,
     fontSize: 10,
     fontWeight: '900',
+  },
+  tabbarSlider: {
+    borderColor: MOBILE_SAGE_NEUTRALS.border,
+    borderRadius: 15,
+    borderWidth: 1,
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    top: 0,
   },
   tabbarServerUrl: {
     color: MOBILE_SAGE_SLATE.subtle,

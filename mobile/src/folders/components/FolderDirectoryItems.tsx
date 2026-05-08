@@ -108,9 +108,8 @@ export const FolderCard = ({
     : [];
   const contentCount = folder.childCount + folder.fileCount + folder.trashCount;
   const isListMode = viewMode === "list";
-  const shouldMergeFolderMeta = isListMode || cardSize === "large";
   const showFolderPath = isListMode || cardSize !== "small";
-  const showFolderMeta = cardSize !== "small" || isListMode;
+  const shouldCompactFolderMeta = cardSize === "small";
   const showCoverIcon = !thumbnailsEnabled || coverItems.length === 0;
   const folderPathLines = cardSize === "large" ? 2 : 1;
   const folderCoverIconSize = isListMode
@@ -251,7 +250,12 @@ export const FolderCard = ({
             {folder.path}
           </Text>
         ) : null}
-        <View style={styles.folderStatusLine}>
+        <View
+          style={[
+            styles.folderStatusLine,
+            shouldCompactFolderMeta ? styles.smallFolderStatusLine : null,
+          ]}
+        >
           <View style={styles.folderStatusMain}>
             {folder.trashCount > 0 ? (
               <Text
@@ -264,16 +268,11 @@ export const FolderCard = ({
                 {folder.trashCount} 回收
               </Text>
             ) : null}
-            {shouldMergeFolderMeta ? (
-              <View style={[styles.folderMeta, styles.folderMetaInline]}>
-                <Text style={styles.folderMetaText}>
-                  {folder.childCount} 个子文件夹
-                </Text>
-                <Text style={styles.folderMetaText}>
-                  {folder.fileCount} 个文件
-                </Text>
-              </View>
-            ) : null}
+            <FolderMetaPills
+              childCount={folder.childCount}
+              compact={shouldCompactFolderMeta}
+              fileCount={folder.fileCount}
+            />
           </View>
           <Pressable
             onPress={(event) => {
@@ -282,6 +281,7 @@ export const FolderCard = ({
             }}
             style={[
               styles.folderActionsToggle,
+              shouldCompactFolderMeta ? styles.smallFolderActionsToggle : null,
               actionsOpen ? styles.folderActionsToggleActive : null,
               actionsOpen ? { backgroundColor: theme.selection } : null,
             ]}
@@ -362,18 +362,72 @@ export const FolderCard = ({
             <Text style={styles.folderActionSheetButtonText}>设封面</Text>
           </Pressable>
         </MobileCenterDialog>
-        {showFolderMeta && !shouldMergeFolderMeta ? (
-          <View style={styles.folderMeta}>
-            <Text style={styles.folderMetaText}>
-              {folder.childCount} 个子文件夹
-            </Text>
-            <Text style={styles.folderMetaText}>{folder.fileCount} 个文件</Text>
-          </View>
-        ) : null}
       </View>
     </Pressable>
   );
 };
+
+/**
+ * Renders compact folder/file counters without textual labels for dense cards.
+ */
+const FolderMetaPills = ({
+  childCount,
+  compact,
+  fileCount,
+}: {
+  childCount: number;
+  compact: boolean;
+  fileCount: number;
+}) => (
+  <View
+    style={[
+      styles.folderMeta,
+      styles.folderMetaInline,
+      compact ? styles.smallFolderMeta : null,
+    ]}
+  >
+    <FolderMetaPill compact={compact} icon="folder-outline" value={childCount} />
+    <FolderMetaPill
+      compact={compact}
+      icon="document-outline"
+      value={fileCount}
+    />
+  </View>
+);
+
+/**
+ * Renders one icon-based count pill.
+ */
+const FolderMetaPill = ({
+  compact,
+  icon,
+  value,
+}: {
+  compact: boolean;
+  icon: ComponentProps<typeof Ionicons>["name"];
+  value: number;
+}) => (
+  <View
+    style={[
+      styles.folderMetaPill,
+      compact ? styles.smallFolderMetaPill : null,
+    ]}
+  >
+    <Ionicons
+      color={MOBILE_SAGE_SLATE.muted}
+      name={icon}
+      size={compact ? 10 : 13}
+    />
+    <Text
+      style={[
+        styles.folderMetaPillText,
+        compact ? styles.smallFolderMetaPillText : null,
+      ]}
+    >
+      {value}
+    </Text>
+  </View>
+);
 
 /**
  * Maps 1-4 cover images to the same collage rules used by Web and desktop.
