@@ -1,8 +1,8 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEventListener } from "expo";
-import { useVideoPlayer, VideoView } from "expo-video";
+import { createVideoPlayer, VideoView } from "expo-video";
 import type { VideoPlayer } from "expo-video";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Animated, AppState, Image, Pressable, ScrollView, Text, View } from "react-native";
 import type { AppStateStatus, ImageStyle, StyleProp } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,6 +25,34 @@ const VIDEO_AUTOPLAY_RETRY_DELAYS_MS = [120, 360, 720, 1200, 1800] as const;
 const VIDEO_RECENT_PLAYING_WINDOW_MS = 1500;
 const VIDEO_POSTER_FADE_DURATION_MS = 140;
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 0.25;
+
+/**
+ * Creates a video player that is released after this component's own cleanup effects.
+ */
+const createConfiguredVideoPlayer = (): VideoPlayer => {
+  const player = createVideoPlayer(null);
+
+  player.allowsExternalPlayback = false;
+  player.loop = false;
+  player.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
+
+  return player;
+};
+
+/**
+ * Releases the native player only after callers have removed listeners and stopped timers.
+ */
+const useReleaseVideoPlayerOnUnmount = (player: VideoPlayer): void => {
+  useEffect(() => {
+    return () => {
+      try {
+        player.release();
+      } catch {
+        // The native player can already be gone during fast refresh or native teardown.
+      }
+    };
+  }, [player]);
+};
 
 /**
  * Keeps the current video cover visible until the next cover has fully loaded.
@@ -229,11 +257,7 @@ export const InlineVideoPreview = ({
   sourceUri?: string;
 }) => {
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
-  const player = useVideoPlayer(null, (createdPlayer) => {
-    createdPlayer.allowsExternalPlayback = false;
-    createdPlayer.loop = false;
-    createdPlayer.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
-  });
+  const player = useMemo(createConfiguredVideoPlayer, []);
   const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
     useVideoPlaybackResume({
       active: Boolean(sourceUri),
@@ -286,6 +310,8 @@ export const InlineVideoPreview = ({
       safelyPausePlayer();
     };
   }, [capturePlaybackSnapshot, player, restorePlaybackSnapshot, sourceUri]);
+
+  useReleaseVideoPlayerOnUnmount(player);
 
   if (!sourceUri) {
     return (
@@ -367,11 +393,7 @@ export const NativeVideoControlsOverlay = ({
   const onLoadErrorRef = useRef(onLoadError);
   const playLoadingRef = useRef(Boolean(playLoading));
   const visibleRef = useRef(visible);
-  const nativePlayer = useVideoPlayer(null, (createdPlayer) => {
-    createdPlayer.allowsExternalPlayback = false;
-    createdPlayer.loop = false;
-    createdPlayer.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
-  });
+  const nativePlayer = useMemo(createConfiguredVideoPlayer, []);
   const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
     useVideoPlaybackResume({
       active: Boolean(sourceUri),
@@ -614,6 +636,8 @@ export const NativeVideoControlsOverlay = ({
       clearNativePlaybackRevealTimer();
     };
   }, [clearNativeAutoplayTimers, clearNativePlaybackRevealTimer]);
+
+  useReleaseVideoPlayerOnUnmount(nativePlayer);
 
   if (!mounted) {
     return null;
