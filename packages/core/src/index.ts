@@ -8,4 +8,5 @@ export * from './folder-sort';
 export * from './folders-service';
 export * from './media-service';
 export * from './media-url';
+export * from './session-recovery';
 export * from './types';

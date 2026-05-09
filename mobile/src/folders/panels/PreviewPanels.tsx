@@ -22,6 +22,7 @@ interface PreviewToolbarButtonProps {
   disabled?: boolean;
   icon: FolderFabIconName;
   iconElement?: ReactElement;
+  iconOpacity?: number;
   label: string;
   onPress: () => void;
 }
@@ -67,9 +68,12 @@ export const PreviewToolbarButton = ({
   disabled = false,
   icon,
   iconElement,
+  iconOpacity = 1,
   label,
   onPress,
 }: PreviewToolbarButtonProps) => {
+  const iconOpacityStyle = iconOpacity < 1 ? { opacity: iconOpacity } : null;
+
   return (
     <Pressable
       accessibilityLabel={label}
@@ -84,9 +88,9 @@ export const PreviewToolbarButton = ({
       {busy ? (
         <ActivityIndicator color="#fff" size="small" />
       ) : iconElement ? (
-        iconElement
+        <View style={iconOpacityStyle}>{iconElement}</View>
       ) : (
-        <Ionicons color="#fff" name={icon} size={20} />
+        <Ionicons color="#fff" name={icon} size={20} style={iconOpacityStyle} />
       )}
     </Pressable>
   );

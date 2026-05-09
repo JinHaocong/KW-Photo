@@ -1,8 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { useEventListener } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
 import type { VideoPlayer } from "expo-video";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Animated, AppState, Image, Pressable, ScrollView, Text, View } from "react-native";
 import type { AppStateStatus, ImageStyle, StyleProp } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -20,6 +21,113 @@ import { styles } from "../folderStyles";
 export type PreviewVideoSourceLabel = "接口" | "缓存";
 
 const MIN_RESTORABLE_VIDEO_TIME = 0.35;
+const VIDEO_AUTOPLAY_RETRY_DELAYS_MS = [120, 360, 720, 1200, 1800] as const;
+const VIDEO_RECENT_PLAYING_WINDOW_MS = 1500;
+const VIDEO_POSTER_FADE_DURATION_MS = 140;
+const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 0.25;
+
+/**
+ * Keeps the current video cover visible until the next cover has fully loaded.
+ */
+const SmoothVideoPoster = ({
+  enhancedUri,
+  posterKey,
+  uri,
+}: {
+  enhancedUri?: string;
+  posterKey?: string;
+  uri?: string;
+}) => {
+  const fadeOpacity = useRef(new Animated.Value(0)).current;
+  const pendingUriRef = useRef<string | undefined>(undefined);
+  const posterKeyRef = useRef(posterKey);
+  const baseUri = uri ?? enhancedUri;
+  const nextUri = enhancedUri ?? baseUri;
+  const [committedUri, setCommittedUri] = useState(baseUri);
+  const [pendingUri, setPendingUri] = useState<string>();
+
+  useEffect(() => {
+    if (posterKeyRef.current !== posterKey) {
+      posterKeyRef.current = posterKey;
+      pendingUriRef.current = undefined;
+      fadeOpacity.stopAnimation();
+      fadeOpacity.setValue(0);
+      setCommittedUri(baseUri);
+      setPendingUri(
+        nextUri && nextUri !== baseUri ? nextUri : undefined,
+      );
+      pendingUriRef.current =
+        nextUri && nextUri !== baseUri ? nextUri : undefined;
+      return;
+    }
+
+    if (!committedUri && baseUri) {
+      setCommittedUri(baseUri);
+      return;
+    }
+
+    if (nextUri && nextUri !== committedUri && nextUri !== pendingUriRef.current) {
+      pendingUriRef.current = nextUri;
+      fadeOpacity.stopAnimation();
+      fadeOpacity.setValue(0);
+      setPendingUri(nextUri);
+    }
+  }, [baseUri, committedUri, fadeOpacity, nextUri, posterKey]);
+
+  const handlePendingLoad = useCallback((): void => {
+    const loadedUri = pendingUriRef.current;
+
+    if (!loadedUri) {
+      return;
+    }
+
+    Animated.timing(fadeOpacity, {
+      duration: VIDEO_POSTER_FADE_DURATION_MS,
+      toValue: 1,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished || pendingUriRef.current !== loadedUri) {
+        return;
+      }
+
+      pendingUriRef.current = undefined;
+      setCommittedUri(loadedUri);
+      setPendingUri(undefined);
+      fadeOpacity.setValue(0);
+    });
+  }, [fadeOpacity]);
+
+  const handlePendingError = useCallback((): void => {
+    pendingUriRef.current = undefined;
+    setPendingUri(undefined);
+    fadeOpacity.setValue(0);
+  }, [fadeOpacity]);
+
+  return (
+    <View pointerEvents="none" style={styles.nativeVideoPosterLayer}>
+      {committedUri ? (
+        <Image
+          resizeMode="contain"
+          source={{ uri: committedUri }}
+          style={styles.nativeVideoPosterImage}
+        />
+      ) : null}
+      {pendingUri ? (
+        <Animated.Image
+          onError={handlePendingError}
+          onLoad={handlePendingLoad}
+          resizeMode="contain"
+          source={{ uri: pendingUri }}
+          style={[
+            styles.nativeVideoPosterImage,
+            styles.nativeVideoPosterImageOverlay,
+            { opacity: fadeOpacity },
+          ]}
+        />
+      ) : null}
+    </View>
+  );
+};
 
 interface ProgressiveImagePreviewProps {
   hdReady: boolean;
@@ -124,6 +232,7 @@ export const InlineVideoPreview = ({
   const player = useVideoPlayer(null, (createdPlayer) => {
     createdPlayer.allowsExternalPlayback = false;
     createdPlayer.loop = false;
+    createdPlayer.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
   });
   const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
     useVideoPlaybackResume({
@@ -217,18 +326,26 @@ export const InlineVideoPreview = ({
  * Plays a prepared video source over the fullscreen preview without leaving the app.
  */
 export const NativeVideoControlsOverlay = ({
+  enhancedPosterUri,
+  mounted,
   onClose,
   onLoadComplete,
   onLoadError,
+  onPlayPress,
+  playLoading,
   playbackKey,
   posterUri,
   sourceLabel,
   sourceUri,
   visible,
 }: {
+  enhancedPosterUri?: string;
+  mounted: boolean;
   onClose: () => void;
   onLoadComplete?: () => void;
   onLoadError?: (messageText: string) => void;
+  onPlayPress?: () => void;
+  playLoading?: boolean;
   playbackKey?: string;
   posterUri?: string;
   sourceLabel?: PreviewVideoSourceLabel;
@@ -240,11 +357,20 @@ export const NativeVideoControlsOverlay = ({
     useState(false);
   const [nativeLoadError, setNativeLoadError] = useState("");
   const [nativeLoadedSourceUri, setNativeLoadedSourceUri] = useState<string>();
+  const [nativePlaybackStarted, setNativePlaybackStarted] = useState(false);
+  const [nativePlaying, setNativePlaying] = useState(false);
+  const nativeAutoplayTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const nativePlaybackRevealTimerRef = useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
   const onLoadCompleteRef = useRef(onLoadComplete);
   const onLoadErrorRef = useRef(onLoadError);
+  const playLoadingRef = useRef(Boolean(playLoading));
+  const visibleRef = useRef(visible);
   const nativePlayer = useVideoPlayer(null, (createdPlayer) => {
     createdPlayer.allowsExternalPlayback = false;
     createdPlayer.loop = false;
+    createdPlayer.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
   });
   const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
     useVideoPlaybackResume({
@@ -254,11 +380,126 @@ export const NativeVideoControlsOverlay = ({
       player: nativePlayer,
       sourceUri,
     });
+  const nativeSourceReady = Boolean(
+    sourceUri && nativeLoadedSourceUri === sourceUri,
+  );
+  const nativeReadyToReveal = nativeFirstFrameRendered && nativePlaybackStarted;
+  const nativePreparing = !nativeSourceReady || (visible && !nativeReadyToReveal);
+  const nativePosterVisible = Boolean(
+    (posterUri || enhancedPosterUri) && (!visible || !nativeReadyToReveal),
+  );
+
+  const clearNativeAutoplayTimers = useCallback((): void => {
+    nativeAutoplayTimersRef.current.forEach((timer) => clearTimeout(timer));
+    nativeAutoplayTimersRef.current = [];
+  }, []);
+
+  const clearNativePlaybackRevealTimer = useCallback((): void => {
+    if (nativePlaybackRevealTimerRef.current) {
+      clearTimeout(nativePlaybackRevealTimerRef.current);
+      nativePlaybackRevealTimerRef.current = undefined;
+    }
+  }, []);
+
+  /**
+   * Reveals native video only after playback is actually advancing.
+   */
+  const markNativePlaybackStarted = useCallback((): void => {
+    clearNativePlaybackRevealTimer();
+    setNativePlaybackStarted(true);
+  }, [clearNativePlaybackRevealTimer]);
+
+  /**
+   * Starts playback as soon as the native source is ready while the parent opens controls.
+   */
+  const completeNativeLoadIfRequested = useCallback((): void => {
+    if (visibleRef.current || playLoadingRef.current) {
+      playVideoPlayer(nativePlayer);
+      onLoadCompleteRef.current?.();
+    }
+  }, [nativePlayer]);
+
+  useEventListener(nativePlayer, "playingChange", ({ isPlaying }) => {
+    setNativePlaying(isPlaying);
+
+    if (isPlaying) {
+      clearNativeAutoplayTimers();
+
+      nativePlaybackRevealTimerRef.current = setTimeout(() => {
+        if (
+          visibleRef.current &&
+          getVideoPlayerCurrentTime(nativePlayer) > 0.05
+        ) {
+          markNativePlaybackStarted();
+        }
+      }, 700);
+    }
+  });
+
+  useEventListener(nativePlayer, "timeUpdate", ({ currentTime }) => {
+    if (
+      visibleRef.current &&
+      nativeLoadedSourceUri === sourceUri &&
+      normalizeVideoTime(currentTime) > 0.05
+    ) {
+      markNativePlaybackStarted();
+    }
+  });
+
+  useEventListener(nativePlayer, "statusChange", ({ status }) => {
+    if (status === "error") {
+      const messageText = "视频加载失败，请稍后重试";
+
+      setNativeLoadError(messageText);
+      clearNativeAutoplayTimers();
+      onLoadErrorRef.current?.(messageText);
+      return;
+    }
+
+    if (status === "readyToPlay" && sourceUri) {
+      setNativeLoadedSourceUri(sourceUri);
+      completeNativeLoadIfRequested();
+    }
+  });
+
+  /**
+   * Replays auto-play a few times because native views can attach after the loaded event.
+   */
+  const requestNativeAutoplay = useCallback((): void => {
+    clearNativeAutoplayTimers();
+
+    const playIfStillVisible = (): void => {
+      if (!visible || !sourceUri || nativeLoadedSourceUri !== sourceUri) {
+        return;
+      }
+
+      playVideoPlayer(nativePlayer);
+    };
+
+    nativeAutoplayTimersRef.current = VIDEO_AUTOPLAY_RETRY_DELAYS_MS.map((delay) =>
+      setTimeout(playIfStillVisible, delay),
+    );
+    playIfStillVisible();
+  }, [
+    clearNativeAutoplayTimers,
+    nativeLoadedSourceUri,
+    nativePlayer,
+    sourceUri,
+    visible,
+  ]);
 
   useEffect(() => {
     onLoadCompleteRef.current = onLoadComplete;
     onLoadErrorRef.current = onLoadError;
   }, [onLoadComplete, onLoadError]);
+
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+
+  useEffect(() => {
+    playLoadingRef.current = Boolean(playLoading);
+  }, [playLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -268,6 +509,9 @@ export const NativeVideoControlsOverlay = ({
       setNativeFirstFrameRendered(false);
       setNativeLoadedSourceUri(undefined);
       setNativeLoadError("");
+      setNativePlaybackStarted(false);
+      setNativePlaying(false);
+      clearNativePlaybackRevealTimer();
 
       try {
         nativePlayer.pause();
@@ -279,6 +523,9 @@ export const NativeVideoControlsOverlay = ({
 
     setNativeLoadError("");
     setNativeFirstFrameRendered(false);
+    setNativePlaybackStarted(false);
+    setNativePlaying(false);
+    clearNativePlaybackRevealTimer();
 
     void nativePlayer
       .replaceAsync(sourceUri)
@@ -286,7 +533,7 @@ export const NativeVideoControlsOverlay = ({
         if (!cancelled) {
           setNativeLoadedSourceUri(sourceUri);
           restorePlaybackSnapshot({ requireLoaded: false });
-          onLoadCompleteRef.current?.();
+          completeNativeLoadIfRequested();
         }
       })
       .catch(() => {
@@ -301,6 +548,7 @@ export const NativeVideoControlsOverlay = ({
     return () => {
       cancelled = true;
       capturePlaybackSnapshot({ pause: true });
+      clearNativePlaybackRevealTimer();
 
       try {
         nativePlayer.pause();
@@ -308,10 +556,19 @@ export const NativeVideoControlsOverlay = ({
         // Native player may already be detached while the modal is closing.
       }
     };
-  }, [capturePlaybackSnapshot, nativePlayer, restorePlaybackSnapshot, sourceUri]);
+  }, [
+    capturePlaybackSnapshot,
+    clearNativePlaybackRevealTimer,
+    completeNativeLoadIfRequested,
+    nativePlayer,
+    restorePlaybackSnapshot,
+    sourceUri,
+  ]);
 
   useEffect(() => {
     if (!visible || !sourceUri || nativeLoadedSourceUri !== sourceUri) {
+      clearNativeAutoplayTimers();
+
       try {
         nativePlayer.pause();
       } catch {
@@ -323,50 +580,104 @@ export const NativeVideoControlsOverlay = ({
     try {
       const restored = restorePlaybackSnapshot({ resume: true });
 
-      if (!restored) {
-        nativePlayer.play();
+      if (!restored || !isVideoPlayerPlaying(nativePlayer)) {
+        requestNativeAutoplay();
       }
     } catch {
       // Playback can fail if the source was replaced while the overlay was opening.
     }
-  }, [nativeLoadedSourceUri, nativePlayer, restorePlaybackSnapshot, sourceUri, visible]);
+  }, [
+    clearNativeAutoplayTimers,
+    nativeLoadedSourceUri,
+    nativePlayer,
+    requestNativeAutoplay,
+    restorePlaybackSnapshot,
+    sourceUri,
+    visible,
+  ]);
 
-  if (!visible) {
+  useEffect(() => {
+    if (visible && nativeSourceReady && !nativePlaying && !nativeLoadError) {
+      requestNativeAutoplay();
+    }
+  }, [
+    nativeLoadError,
+    nativePlaying,
+    nativeSourceReady,
+    requestNativeAutoplay,
+    visible,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearNativeAutoplayTimers();
+      clearNativePlaybackRevealTimer();
+    };
+  }, [clearNativeAutoplayTimers, clearNativePlaybackRevealTimer]);
+
+  if (!mounted) {
     return null;
   }
 
   return (
     <View
+      collapsable={false}
+      pointerEvents="auto"
       style={[
         styles.nativeVideoPlayerOverlay,
-        !nativeFirstFrameRendered
+        nativePreparing
           ? styles.nativeVideoPlayerOverlayPreparing
           : null,
+        !visible ? styles.nativeVideoPlayerOverlayIdle : null,
       ]}
     >
-      {sourceUri ? (
-        <VideoView
-          contentFit="contain"
-          fullscreenOptions={{ enable: true }}
-          nativeControls
-          onFirstFrameRender={() => setNativeFirstFrameRendered(true)}
-          player={nativePlayer}
-          style={[
-            styles.nativeVideoPlayer,
-            !nativeFirstFrameRendered ? styles.nativeVideoPlayerHidden : null,
-          ]}
+      <VideoView
+        contentFit="contain"
+        fullscreenOptions={{ enable: true }}
+        nativeControls={visible}
+        onFirstFrameRender={() => setNativeFirstFrameRendered(true)}
+        player={nativePlayer}
+        surfaceType="textureView"
+        style={[
+          styles.nativeVideoPlayer,
+          !nativeSourceReady ? styles.nativeVideoPlayerHidden : null,
+        ]}
+      />
+      {nativePosterVisible ? (
+        <SmoothVideoPoster
+          enhancedUri={enhancedPosterUri}
+          posterKey={playbackKey}
+          uri={posterUri}
         />
       ) : null}
-      {posterUri && !nativeFirstFrameRendered ? (
-        <View pointerEvents="none" style={styles.nativeVideoPosterLayer}>
-          <Image
-            resizeMode="contain"
-            source={{ uri: posterUri }}
-            style={styles.nativeVideoPosterImage}
-          />
+      {!visible && onPlayPress ? (
+        <View pointerEvents="box-none" style={styles.previewPosterActionStack}>
+          <Pressable
+            accessibilityLabel="播放视频"
+            disabled={playLoading}
+            onPress={onPlayPress}
+            style={[
+              styles.previewPosterPlayButton,
+              playLoading ? styles.previewPosterPlayButtonLoading : null,
+            ]}
+          >
+            {playLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Ionicons color="#fff" name="play" size={30} />
+            )}
+          </Pressable>
         </View>
       ) : null}
-      {sourceLabel ? (
+      {visible && nativePreparing && !nativeLoadError ? (
+        <View pointerEvents="none" style={styles.nativeVideoLoadingLayer}>
+          <ActivityIndicator color="#fff" />
+          <Text style={styles.nativeVideoLoadingText}>
+            {sourceUri ? "正在加载视频" : "正在准备播放地址"}
+          </Text>
+        </View>
+      ) : null}
+      {visible && sourceLabel ? (
         <View
           pointerEvents="none"
           style={[
@@ -377,22 +688,24 @@ export const NativeVideoControlsOverlay = ({
           <Text style={styles.nativeVideoSourceBadgeText}>{sourceLabel}</Text>
         </View>
       ) : null}
-      {nativeLoadError ? (
+      {visible && nativeLoadError ? (
         <View pointerEvents="none" style={styles.nativeVideoLoadingLayer}>
           <Ionicons color="#fff" name="alert-circle-outline" size={24} />
           <Text style={styles.nativeVideoLoadingText}>{nativeLoadError}</Text>
         </View>
       ) : null}
-      <Pressable
-        accessibilityLabel="关闭视频播放器"
-        onPress={onClose}
-        style={[
-          styles.nativeVideoCloseButton,
-          styles.nativeVideoCloseButtonSide,
-        ]}
-      >
-        <Ionicons color="#fff" name="close" size={22} />
-      </Pressable>
+      {visible ? (
+        <Pressable
+          accessibilityLabel="关闭视频播放器"
+          onPress={onClose}
+          style={[
+            styles.nativeVideoCloseButton,
+            styles.nativeVideoCloseButtonSide,
+          ]}
+        >
+          <Ionicons color="#fff" name="close" size={22} />
+        </Pressable>
+      ) : null}
     </View>
   );
 };
@@ -425,13 +738,100 @@ const useVideoPlaybackResume = ({
   restorePlaybackSnapshot: (options?: { requireLoaded?: boolean; resume?: boolean }) => boolean;
 } => {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const lastPlayingAtRef = useRef(0);
+  const latestPlayingRef = useRef(false);
+  const latestPositionRef = useRef(0);
+  const restoreTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const snapshotRef = useRef<VideoPlaybackSnapshot | undefined>(undefined);
   const activePlaybackKey = playbackKey ?? sourceUri;
+
+  const clearRestoreTimers = useCallback((): void => {
+    restoreTimersRef.current.forEach((timer) => clearTimeout(timer));
+    restoreTimersRef.current = [];
+  }, []);
+
+  useEventListener(player, "timeUpdate", ({ currentTime }) => {
+    if (!active || !activePlaybackKey || !sourceUri) {
+      return;
+    }
+
+    const nextPosition = normalizeVideoTime(currentTime);
+
+    if (nextPosition > 0) {
+      latestPositionRef.current = nextPosition;
+    }
+  });
+
+  useEventListener(player, "playingChange", ({ isPlaying }) => {
+    if (isPlaying) {
+      lastPlayingAtRef.current = Date.now();
+    }
+
+    if (appStateRef.current === "active") {
+      latestPlayingRef.current = isPlaying;
+
+      if (!isPlaying) {
+        clearRestoreTimers();
+      }
+    }
+  });
+
+  /**
+   * Applies a saved position and optional resume command without forcing stale seeks.
+   */
+  const applyPlaybackSnapshot = useCallback((
+    snapshot: VideoPlaybackSnapshot,
+    options: { resume?: boolean } = {},
+  ): void => {
+    if (snapshot.position > MIN_RESTORABLE_VIDEO_TIME) {
+      const currentPosition = getVideoPlayerCurrentTime(player);
+
+      if (Math.abs(currentPosition - snapshot.position) > 0.25) {
+        seekVideoPlayer(player, snapshot.position);
+      }
+    }
+
+    if (options.resume && snapshot.shouldResume && !isVideoPlayerPlaying(player)) {
+      playVideoPlayer(player);
+    }
+  }, [player]);
+
+  /**
+   * Retries restore briefly because native players can report ready before seek/play is accepted.
+   */
+  const schedulePlaybackRestoreRetries = useCallback((
+    snapshot: VideoPlaybackSnapshot,
+    options: { resume?: boolean } = {},
+  ): void => {
+    clearRestoreTimers();
+    restoreTimersRef.current = VIDEO_AUTOPLAY_RETRY_DELAYS_MS.map((delay) =>
+      setTimeout(() => {
+        const currentSnapshot = snapshotRef.current;
+
+        if (
+          !active ||
+          !activePlaybackKey ||
+          currentSnapshot?.playbackKey !== snapshot.playbackKey
+        ) {
+          return;
+        }
+
+        applyPlaybackSnapshot(snapshot, options);
+      }, delay),
+    );
+  }, [
+    active,
+    activePlaybackKey,
+    applyPlaybackSnapshot,
+    clearRestoreTimers,
+  ]);
 
   const capturePlaybackSnapshot = useCallback((options: { pause?: boolean } = {}): void => {
     if (!active || !activePlaybackKey || !sourceUri) {
       return;
     }
+
+    clearRestoreTimers();
 
     const previousSnapshot = snapshotRef.current;
 
@@ -444,8 +844,11 @@ const useVideoPlaybackResume = ({
     }
 
     const currentPosition = getVideoPlayerCurrentTime(player);
+    const latestPosition = latestPositionRef.current;
     const position = currentPosition > 0
       ? currentPosition
+      : latestPosition > 0
+        ? latestPosition
       : previousSnapshot?.playbackKey === activePlaybackKey
         ? previousSnapshot.position
         : 0;
@@ -453,13 +856,16 @@ const useVideoPlaybackResume = ({
     snapshotRef.current = {
       playbackKey: activePlaybackKey,
       position,
-      shouldResume: isVideoPlayerPlaying(player),
+      shouldResume:
+        isVideoPlayerPlaying(player) ||
+        latestPlayingRef.current ||
+        Date.now() - lastPlayingAtRef.current < VIDEO_RECENT_PLAYING_WINDOW_MS,
     };
 
     if (options.pause) {
       pauseVideoPlayer(player);
     }
-  }, [active, activePlaybackKey, player, sourceUri]);
+  }, [active, activePlaybackKey, clearRestoreTimers, player, sourceUri]);
 
   const restorePlaybackSnapshot = useCallback((options: { requireLoaded?: boolean; resume?: boolean } = {}): boolean => {
     const requireLoaded = options.requireLoaded ?? true;
@@ -474,16 +880,35 @@ const useVideoPlaybackResume = ({
       return false;
     }
 
-    if (snapshot.position > MIN_RESTORABLE_VIDEO_TIME) {
-      seekVideoPlayer(player, snapshot.position);
+    if (options.resume) {
+      schedulePlaybackRestoreRetries(snapshot, options);
     }
 
-    if (options.resume && snapshot.shouldResume) {
-      playVideoPlayer(player);
-    }
+    applyPlaybackSnapshot(snapshot, options);
 
     return true;
-  }, [activePlaybackKey, loaded, player, sourceUri]);
+  }, [
+    activePlaybackKey,
+    applyPlaybackSnapshot,
+    loaded,
+    schedulePlaybackRestoreRetries,
+    sourceUri,
+  ]);
+
+  useEffect(() => {
+    if (!activePlaybackKey || !sourceUri) {
+      latestPlayingRef.current = false;
+      latestPositionRef.current = 0;
+      clearRestoreTimers();
+      return;
+    }
+
+    const snapshot = snapshotRef.current;
+
+    latestPositionRef.current =
+      snapshot?.playbackKey === activePlaybackKey ? snapshot.position : 0;
+    latestPlayingRef.current = isVideoPlayerPlaying(player);
+  }, [activePlaybackKey, clearRestoreTimers, player, sourceUri]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
@@ -506,6 +931,8 @@ const useVideoPlaybackResume = ({
       subscription.remove();
     };
   }, [capturePlaybackSnapshot, restorePlaybackSnapshot]);
+
+  useEffect(() => clearRestoreTimers, [clearRestoreTimers]);
 
   return {
     capturePlaybackSnapshot,

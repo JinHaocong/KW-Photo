@@ -27,7 +27,6 @@ import {
   fetchAdminGalleryUserLinks,
   fetchAdminTasks,
   fetchAdminUsers,
-  findAdminDuplicateFiles,
   isAdminGalleryTask,
   scanAdminAllGalleries,
   scanAdminGallery,
@@ -35,7 +34,6 @@ import {
   updateAdminGalleryWeight,
 } from '../../services/admin-service';
 import type {
-  AdminDuplicateFileRecord,
   AdminFileDeleteLogPage,
   AdminGallery,
   AdminGalleryMutationPayload,
@@ -48,6 +46,7 @@ import type { ApiClientOptions } from '../../services/api-client';
 import { getApiErrorMessage } from '../../services/api-client';
 import type { CurrentUser } from '../../shared/types';
 import { AdminDeletedFilesDialog } from './AdminDeletedFilesDialog';
+import { AdminDuplicateFilesDialog } from './AdminDuplicateFilesDialog';
 import { AdminGalleryConfirmDialog } from './AdminGalleryConfirmDialog';
 import { AdminGalleryDeletedLogDialog } from './AdminGalleryDeletedLogDialog';
 import { AdminGalleryEditorDialog } from './AdminGalleryEditorDialog';
@@ -60,14 +59,22 @@ const ACTIVE_TASK_REFETCH_INTERVAL = 2000;
 
 interface AdminGalleryPanelProps {
   apiOptions: ApiClientOptions;
+  authCode?: string;
   currentUser?: CurrentUser;
+  onEnsureAuthCode?: () => Promise<string | undefined>;
   onShowToast: (message: string) => void;
 }
 
 /**
  * Provides the gallery management workspace, including list, scan and mutation actions.
  */
-export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: AdminGalleryPanelProps) => {
+export const AdminGalleryPanel = ({
+  apiOptions,
+  authCode,
+  currentUser,
+  onEnsureAuthCode,
+  onShowToast,
+}: AdminGalleryPanelProps) => {
   const activeTaskPollingInFlightRef = useRef(false);
   const emptyTaskPollCountRef = useRef(0);
   const [actionLoading, setActionLoading] = useState('');
@@ -75,7 +82,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   const [deleteTarget, setDeleteTarget] = useState<AdminGallery>();
   const [deletedLogOpen, setDeletedLogOpen] = useState(false);
   const [deletedLogPage, setDeletedLogPage] = useState<AdminFileDeleteLogPage>();
-  const [duplicateFiles, setDuplicateFiles] = useState<AdminDuplicateFileRecord[]>();
+  const [duplicateFilesOpen, setDuplicateFilesOpen] = useState(false);
   const [editorGallery, setEditorGallery] = useState<AdminGallery>();
   const [editorOpen, setEditorOpen] = useState(false);
   const [error, setError] = useState('');
@@ -307,18 +314,13 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
     });
   };
 
-  const handleFindDuplicateFiles = async (): Promise<void> => {
+  const handleOpenDuplicateFiles = (): void => {
     if (galleryIds.length === 0) {
       onShowToast('当前没有可检查的图库');
       return;
     }
 
-    await runPanelAction('duplicate', async () => {
-      const files = await findAdminDuplicateFiles(apiOptions, galleryIds);
-
-      setDuplicateFiles(files);
-      onShowToast(files.length > 0 ? `发现 ${files.length} 个重复文件` : '没有发现重复文件');
-    });
+    setDuplicateFilesOpen(true);
   };
 
   /**
@@ -327,7 +329,20 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
   const handleOpenDeletedLogs = async (pageNo = 1): Promise<void> => {
     setDeletedLogOpen(true);
     await runPanelAction('deleted-logs', async () => {
-      setDeletedLogPage(await fetchAdminFileDeleteLogs(apiOptions, pageNo));
+      const [pageResult, usersResult] = await Promise.allSettled([
+        fetchAdminFileDeleteLogs(apiOptions, pageNo),
+        users.length > 0 ? Promise.resolve(users) : fetchAdminUsers(apiOptions),
+      ]);
+
+      if (usersResult.status === 'fulfilled') {
+        setUsers(usersResult.value);
+      }
+
+      if (pageResult.status === 'rejected') {
+        throw pageResult.reason;
+      }
+
+      setDeletedLogPage(pageResult.value);
     });
   };
 
@@ -400,7 +415,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
       </div>
 
       <div className="admin-gallery-toolbar">
-        <button className="secondary-btn" disabled={actionLoading === 'duplicate'} onClick={() => void handleFindDuplicateFiles()} type="button">
+        <button className="secondary-btn" disabled={loading} onClick={handleOpenDuplicateFiles} type="button">
           <CheckCircle2 size={15} />
           检查重复文件
         </button>
@@ -436,20 +451,6 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
           <span>照片：{statSummary.photo}</span>
           <span>视频：{statSummary.video}</span>
           <span>总大小：{formatBytes(statSummary.totalSize)}</span>
-        </div>
-      ) : null}
-
-      {duplicateFiles ? (
-        <div className="admin-gallery-log-panel admin-gallery-result-panel">
-          <strong>重复文件检查结果</strong>
-          <div>
-            {duplicateFiles.length === 0 ? <span>没有发现重复文件。</span> : null}
-            {duplicateFiles.slice(0, 6).map((file) => (
-              <span key={`${file.id}-${file.md5}`} title={`${file.filePath} · ${formatBytes(file.size)}`}>
-                {file.fileName} · {formatBytes(file.size)} · 图库 {file.galleryIds.join(',') || '-'}
-              </span>
-            ))}
-          </div>
         </div>
       ) : null}
 
@@ -574,6 +575,18 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
         onStatsLoaded={setStatSummary}
       />
 
+      {duplicateFilesOpen ? (
+        <AdminDuplicateFilesDialog
+          apiOptions={apiOptions}
+          authCode={authCode}
+          galleries={galleries}
+          onClose={() => setDuplicateFilesOpen(false)}
+          onEnsureAuthCode={onEnsureAuthCode}
+          onShowToast={onShowToast}
+          open={duplicateFilesOpen}
+        />
+      ) : null}
+
       <AdminGalleryDeletedLogDialog
         actionLoading={actionLoading}
         onClose={() => setDeletedLogOpen(false)}
@@ -582,6 +595,7 @@ export const AdminGalleryPanel = ({ apiOptions, currentUser, onShowToast }: Admi
         onLoadPage={(pageNo) => void handleOpenDeletedLogs(pageNo)}
         open={deletedLogOpen}
         page={deletedLogPage}
+        users={users}
       />
 
       {deletedFilesOpen ? (

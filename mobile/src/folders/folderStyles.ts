@@ -1143,9 +1143,15 @@ export const styles = StyleSheet.create({
   nativeVideoPlayerOverlayPreparing: {
     backgroundColor: "transparent",
   },
+  nativeVideoPlayerOverlayIdle: {
+    backgroundColor: "transparent",
+  },
   nativeVideoPosterImage: {
     height: "100%",
     width: "100%",
+  },
+  nativeVideoPosterImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
   },
   nativeVideoPosterLayer: {
     ...StyleSheet.absoluteFillObject,

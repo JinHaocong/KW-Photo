@@ -44,6 +44,7 @@ import type {
   FolderDirectory,
   FolderFileSummary,
   FolderSummary,
+  VideoTranscodeResult,
 } from "@kwphoto/core";
 import {
   autoSetFolderCover,
@@ -250,6 +251,16 @@ const FOLDER_CONTENT_BOTTOM_TABBAR_SAFE_AREA_OFFSET = 98;
 const FOLDER_RESTORE_OVERLAY_DELAY_MS = 180;
 const FOLDER_RESTORE_OVERLAY_FADE_DURATION_MS = 220;
 const INFUSE_APP_ICON_SOURCE = require("../assets/infuse-icon.jpg");
+const VIDEO_TRANSCODE_FAILED_STATUS = -1;
+const VIDEO_TRANSCODE_IGNORED_STATUS = 12;
+const VIDEO_TRANSCODE_READY_STATUS = 2;
+const VIDEO_TRANSCODE_WAIT_DELAYS_MS = [
+  800,
+  1200,
+  1800,
+  2600,
+  3600,
+] as const;
 
 const FolderStack = createNativeStackNavigator<MobileFolderStackParamList>();
 const FOLDER_NAVIGATION_THEME: Theme = {
@@ -297,6 +308,31 @@ const InfuseToolbarIcon = (): ReactElement => (
     style={styles.previewExternalPlayerInfuseIcon}
   />
 );
+
+/**
+ * Waits between transcode readiness polls without blocking React state updates.
+ */
+const waitForVideoTranscodePoll = (durationMs: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+
+/**
+ * Converts backend transcode task state into the user-facing preview failure reason.
+ */
+const getVideoTranscodeUnavailableMessage = (
+  result?: VideoTranscodeResult,
+): string => {
+  if (result?.transcodeStatus === VIDEO_TRANSCODE_FAILED_STATUS) {
+    return "视频转码失败，请稍后重试";
+  }
+
+  if (result?.transcodeStatus === VIDEO_TRANSCODE_IGNORED_STATUS) {
+    return "当前视频暂不支持内置转码播放";
+  }
+
+  return "视频仍在转码中，请稍后再试";
+};
 
 /**
  * Hosts the native folder stack while the outer bottom tabs keep local state switching.
@@ -539,6 +575,9 @@ const MobileFolderDirectoryScreen = ({
   const mediaAuthRequestRef = useRef<Promise<string | undefined> | undefined>(
     undefined,
   );
+  const nativePreviewVideoAuthRetryKeyRef = useRef<string | undefined>(
+    undefined,
+  );
   const previewAutoOriginalSessionRef = useRef<string | undefined>(undefined);
   const previewHdLoadRequestRef = useRef(0);
   const previewImageLoadRequestRef = useRef(0);
@@ -547,6 +586,7 @@ const MobileFolderDirectoryScreen = ({
   const previewNoticeTimerRef = useRef<
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
+  const nativePreviewVideoPreloadRequestRef = useRef(0);
   const nativePreviewVideoLoadRequestRef = useRef(0);
   const previewVideoPrepareRequestRef = useRef(0);
   const apiOptions = useMobileApiOptions({
@@ -690,10 +730,10 @@ const MobileFolderDirectoryScreen = ({
   /**
    * Ensures image endpoints have a media auth_code for thumbnails and previews.
    */
-  const ensureMediaAuthCode = useCallback(async (): Promise<
-    string | undefined
-  > => {
-    if (tokensRef.current.authCode) {
+  const ensureMediaAuthCode = useCallback(async (
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<string | undefined> => {
+    if (tokensRef.current.authCode && !options.forceRefresh) {
       return tokensRef.current.authCode;
     }
 
@@ -1262,6 +1302,10 @@ const MobileFolderDirectoryScreen = ({
           createFileSelectionKey(previewFile),
       )
     : -1;
+  const previewCurrentGalleryItem =
+    previewImageGalleryIndex >= 0
+      ? previewImageGalleryItems[previewImageGalleryIndex]
+      : undefined;
   const previewDefaultImageCache = previewHdReady
     ? previewHdImageCache
     : previewListThumbnailCache;
@@ -1298,7 +1342,10 @@ const MobileFolderDirectoryScreen = ({
     previewDefaultImageCache.displayUri ??
     previewListThumbnailCache.displayUri;
   const previewVideoCoverUri =
-    previewVideoPosterUri ?? previewListThumbnailCache.displayUri;
+    previewListThumbnailCache.displayUri ??
+    previewCurrentGalleryItem?.thumbnailUri ??
+    previewCurrentGalleryItem?.uri ??
+    previewVideoPosterUri;
   const previewCurrentMediaActiveUri = previewIsVideo
     ? previewVideoCoverUri
     : previewImageActiveUri;
@@ -1331,6 +1378,9 @@ const MobileFolderDirectoryScreen = ({
   );
   const previewUsesImageViewer = Boolean(
     previewFile && previewImageGalleryIndex >= 0,
+  );
+  const nativePreviewVideoMounted = Boolean(
+    previewUsesImageViewer && previewIsVideo && previewFileKey,
   );
   const previewVideoPlaybackActive = Boolean(
     nativePreviewVideoOpen || nativePreviewVideoRequestKey,
@@ -1383,7 +1433,7 @@ const MobileFolderDirectoryScreen = ({
     if (
       !previewVideoPosterUri ||
       !previewFileKey ||
-      (!nativePreviewVideoOpen && !nativePreviewVideoRequestKey)
+      !nativePreviewVideoMounted
     ) {
       return;
     }
@@ -1397,6 +1447,7 @@ const MobileFolderDirectoryScreen = ({
 
     setNativePreviewVideoPosterUri(previewVideoPosterUri);
   }, [
+    nativePreviewVideoMounted,
     nativePreviewVideoOpen,
     nativePreviewVideoRequestKey,
     previewFileKey,
@@ -1731,6 +1782,72 @@ const MobileFolderDirectoryScreen = ({
   };
 
   /**
+   * Waits until a non-direct video has a generated transcode file before
+   * handing its URL to the native player.
+   */
+  const waitForNativeVideoTranscodeReady = async (
+    file: FolderFileSummary,
+    requestId: number,
+  ): Promise<boolean> => {
+    let lastResult: VideoTranscodeResult | undefined;
+
+    for (
+      let attemptIndex = 0;
+      attemptIndex <= VIDEO_TRANSCODE_WAIT_DELAYS_MS.length;
+      attemptIndex += 1
+    ) {
+      if (nativePreviewVideoLoadRequestRef.current !== requestId) {
+        return false;
+      }
+
+      try {
+        lastResult = await triggerVideoTranscode({
+          ...apiOptions,
+          fileId: file.id,
+        });
+      } catch (transcodeError) {
+        if (nativePreviewVideoLoadRequestRef.current === requestId) {
+          showPreviewNotice(
+            `视频转码准备失败：${getApiErrorMessage(transcodeError)}`,
+          );
+        }
+
+        return false;
+      }
+
+      if (nativePreviewVideoLoadRequestRef.current !== requestId) {
+        return false;
+      }
+
+      if (lastResult.transcodeStatus === VIDEO_TRANSCODE_READY_STATUS) {
+        return true;
+      }
+
+      if (
+        lastResult.transcodeStatus === VIDEO_TRANSCODE_FAILED_STATUS ||
+        lastResult.transcodeStatus === VIDEO_TRANSCODE_IGNORED_STATUS
+      ) {
+        showPreviewNotice(getVideoTranscodeUnavailableMessage(lastResult));
+        return false;
+      }
+
+      const nextDelay = VIDEO_TRANSCODE_WAIT_DELAYS_MS[attemptIndex];
+
+      if (nextDelay === undefined) {
+        break;
+      }
+
+      await waitForVideoTranscodePoll(nextDelay);
+    }
+
+    if (nativePreviewVideoLoadRequestRef.current === requestId) {
+      showPreviewNotice(getVideoTranscodeUnavailableMessage(lastResult));
+    }
+
+    return false;
+  };
+
+  /**
    * Opens a file preview and starts media authorization if needed.
    */
   const handlePreviewFile = (file: FolderFileSummary): void => {
@@ -1762,6 +1879,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewNotice("");
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
+    nativePreviewVideoPreloadRequestRef.current += 1;
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
     setNativePreviewVideoPlaybackKey(undefined);
@@ -1770,7 +1888,6 @@ const MobileFolderDirectoryScreen = ({
     setNativePreviewVideoSourceLabel(undefined);
     setNativePreviewVideoSourceUri(undefined);
     void ensureMediaAuthCode();
-    prepareVideoPreview(file);
   };
 
   /**
@@ -1805,6 +1922,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewNotice("");
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
+    nativePreviewVideoPreloadRequestRef.current += 1;
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
     setNativePreviewVideoPlaybackKey(undefined);
@@ -2300,6 +2418,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewDetailError("");
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
+    nativePreviewVideoPreloadRequestRef.current += 1;
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
     setNativePreviewVideoPlaybackKey(undefined);
@@ -2309,7 +2428,6 @@ const MobileFolderDirectoryScreen = ({
     setNativePreviewVideoSourceUri(undefined);
     setPreviewFile(nextFile);
     void ensureMediaAuthCode();
-    prepareVideoPreview(nextFile);
   };
 
   /**
@@ -2339,6 +2457,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewDetailError("");
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
+    nativePreviewVideoPreloadRequestRef.current += 1;
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
     setNativePreviewVideoPlaybackKey(undefined);
@@ -2350,7 +2469,6 @@ const MobileFolderDirectoryScreen = ({
 
     if (nextIsVideo) {
       void ensureMediaAuthCode();
-      prepareVideoPreview(nextFile);
     }
   };
 
@@ -2987,6 +3105,7 @@ const MobileFolderDirectoryScreen = ({
             busy={previewBusyAction === "delete"}
             disabled={!previewFile || Boolean(previewBusyAction)}
             icon="trash-outline"
+            iconOpacity={0.62}
             label="放到回收站"
             onPress={confirmDeletePreviewFile}
           />
@@ -3083,16 +3202,17 @@ const MobileFolderDirectoryScreen = ({
    */
   const createVideoPlaybackUrlForFile = (
     file: FolderFileSummary,
+    authCode = session.tokens.authCode,
   ): string | undefined => {
     const directUrl = createVideoPreviewUrl({
-      authCode: session.tokens.authCode,
+      authCode,
       baseUrl: session.serverUrl,
       id: file.id,
       md5: file.md5,
       type: "direct",
     });
     const transcodeUrl = createVideoPreviewUrl({
-      authCode: session.tokens.authCode,
+      authCode,
       baseUrl: session.serverUrl,
       id: file.id,
       md5: file.md5,
@@ -3145,6 +3265,77 @@ const MobileFolderDirectoryScreen = ({
       : (previewWarmThumbnailUris[mediaKey] ?? galleryItem?.uri);
   };
 
+  useEffect(() => {
+    if (
+      !nativePreviewVideoMounted ||
+      !previewFile ||
+      !previewFileKey ||
+      !previewIsVideo
+    ) {
+      nativePreviewVideoPreloadRequestRef.current += 1;
+      setNativePreviewVideoPlaybackKey(undefined);
+      setNativePreviewVideoSourceLabel(undefined);
+      setNativePreviewVideoSourceUri(undefined);
+      return undefined;
+    }
+
+    const remoteSourceUri = createVideoPlaybackUrlForFile(previewFile);
+    const preloadRequestId = nativePreviewVideoPreloadRequestRef.current + 1;
+
+    nativePreviewVideoPreloadRequestRef.current = preloadRequestId;
+    setNativePreviewVideoPlaybackKey(previewFileKey);
+    setNativePreviewVideoSourceLabel(undefined);
+    setNativePreviewVideoSourceUri(undefined);
+
+    if (!remoteSourceUri || !cacheEnabled) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const variant = isDirectVideoPreviewSupported(previewFile)
+      ? "direct"
+      : "transcode";
+
+    /**
+     * Preloads only cached videos while the user is browsing the fullscreen gallery.
+     */
+    const preloadCachedVideoSource = async (): Promise<void> => {
+      const cachedUri = await readCachedMobileMediaUri({
+        fileId: previewFile.id,
+        folder: cacheFolder,
+        kind: "video-preview",
+        md5: previewFile.md5,
+        url: remoteSourceUri,
+        variant,
+      }).catch(() => undefined);
+
+      if (
+        cancelled ||
+        nativePreviewVideoPreloadRequestRef.current !== preloadRequestId
+      ) {
+        return;
+      }
+
+      if (cachedUri) {
+        setNativePreviewVideoSourceLabel("缓存");
+        setNativePreviewVideoSourceUri(cachedUri);
+      }
+    };
+
+    void preloadCachedVideoSource();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cacheEnabled,
+    cacheFolder,
+    nativePreviewVideoMounted,
+    previewFile,
+    previewFileKey,
+    previewIsVideo,
+  ]);
+
   /**
    * Resolves a cached video source first, then falls back to the remote preview URL.
    */
@@ -3152,53 +3343,72 @@ const MobileFolderDirectoryScreen = ({
     file: FolderFileSummary,
   ): Promise<void> => {
     const fileKey = createFileSelectionKey(file);
-    const remoteSourceUri = createVideoPlaybackUrlForFile(file);
     const requestId = nativePreviewVideoLoadRequestRef.current + 1;
 
     nativePreviewVideoLoadRequestRef.current = requestId;
+    nativePreviewVideoAuthRetryKeyRef.current = undefined;
     setNativePreviewVideoOpen(false);
     setNativePreviewVideoPosterUri(getVideoPosterUriForFile(file));
     setNativePreviewVideoPlaybackKey(fileKey);
+
+    if (
+      nativePreviewVideoPlaybackKey === fileKey &&
+      nativePreviewVideoSourceLabel === "缓存" &&
+      nativePreviewVideoSourceUri
+    ) {
+      setNativePreviewVideoRequestKey(undefined);
+      setNativePreviewVideoOpen(true);
+      return;
+    }
+
     setNativePreviewVideoRequestKey(fileKey);
-    setNativePreviewVideoSourceLabel(undefined);
-    setNativePreviewVideoSourceUri(undefined);
+
+    let authCode: string | undefined;
+
+    try {
+      authCode = await ensureMediaAuthCode();
+    } catch {
+      authCode = undefined;
+    }
+
+    if (nativePreviewVideoLoadRequestRef.current !== requestId) {
+      return;
+    }
+
+    const remoteSourceUri = createVideoPlaybackUrlForFile(file, authCode);
 
     if (!remoteSourceUri) {
+      setNativePreviewVideoOpen(false);
       setNativePreviewVideoPlaybackKey(undefined);
       setNativePreviewVideoRequestKey(undefined);
       showPreviewNotice("当前视频没有可用播放地址");
       return;
     }
 
-    if (!isDirectVideoPreviewSupported(file)) {
-      prepareVideoPreview(file);
-    }
-
     const variant = isDirectVideoPreviewSupported(file)
       ? "direct"
       : "transcode";
     let playbackSourceUri = remoteSourceUri;
+    let shouldCachePlaybackSource = false;
     let sourceLabel: PreviewVideoSourceLabel = "接口";
+    const cacheParams = {
+      fileId: file.id,
+      folder: cacheFolder,
+      kind: "video-preview" as const,
+      md5: file.md5,
+      url: remoteSourceUri,
+      variant,
+    };
     const currentPreviewFileSelected =
       previewFile &&
       createFileSelectionKey(file) === createFileSelectionKey(previewFile);
 
-    if (
-      currentPreviewFileSelected &&
-      previewVideoCache.cacheHit &&
-      previewVideoCache.displayUri
-    ) {
-      playbackSourceUri = previewVideoCache.displayUri;
-      sourceLabel = "缓存";
+    if (currentPreviewFileSelected && previewVideoCache.cacheHit) {
+      if (previewVideoCache.displayUri) {
+        playbackSourceUri = previewVideoCache.displayUri;
+        sourceLabel = "缓存";
+      }
     } else if (cacheEnabled) {
-      const cacheParams = {
-        fileId: file.id,
-        folder: cacheFolder,
-        kind: "video-preview" as const,
-        md5: file.md5,
-        url: remoteSourceUri,
-        variant,
-      };
       const cachedUri = await readCachedMobileMediaUri(cacheParams).catch(
         () => undefined,
       );
@@ -3211,12 +3421,38 @@ const MobileFolderDirectoryScreen = ({
         playbackSourceUri = cachedUri;
         sourceLabel = "缓存";
       } else {
-        void cacheMobileMediaResourceFromUrl(cacheParams);
+        if (currentPreviewFileSelected && previewVideoCache.displayUri) {
+          playbackSourceUri = previewVideoCache.displayUri;
+        }
+
+        shouldCachePlaybackSource = true;
       }
+    } else if (currentPreviewFileSelected && previewVideoCache.displayUri) {
+      playbackSourceUri = previewVideoCache.displayUri;
     }
 
     if (nativePreviewVideoLoadRequestRef.current !== requestId) {
       return;
+    }
+
+    if (sourceLabel !== "缓存" && !isDirectVideoPreviewSupported(file)) {
+      const transcodeReady = await waitForNativeVideoTranscodeReady(
+        file,
+        requestId,
+      );
+
+      if (nativePreviewVideoLoadRequestRef.current !== requestId) {
+        return;
+      }
+
+      if (!transcodeReady) {
+        setNativePreviewVideoRequestKey(undefined);
+        return;
+      }
+    }
+
+    if (shouldCachePlaybackSource) {
+      void cacheMobileMediaResourceFromUrl(cacheParams);
     }
 
     setNativePreviewVideoSourceLabel(sourceLabel);
@@ -3325,77 +3561,163 @@ const MobileFolderDirectoryScreen = ({
     );
   };
 
-  const renderImagePreviewItemOverlay = ({
+  /**
+   * Lets the native video surface own the current video item instead of keeping
+   * react-native-image-viewing's image layer underneath it.
+   */
+  const shouldRenderPreviewImageItem = (imageIndex: number): boolean => {
+    const itemFile = previewImageGalleryItems[imageIndex]?.file;
+
+    if (!itemFile || !isVideoFile(itemFile) || !nativePreviewVideoMounted) {
+      return true;
+    }
+
+    return createFileSelectionKey(itemFile) !== previewFileKey;
+  };
+
+  /**
+   * Stops the native video layer before the carousel starts moving.
+   */
+  const closeNativePreviewVideoLayer = (): void => {
+    nativePreviewVideoLoadRequestRef.current += 1;
+    nativePreviewVideoAuthRetryKeyRef.current = undefined;
+    setNativePreviewVideoOpen(false);
+    setNativePreviewVideoRequestKey(undefined);
+
+    if (nativePreviewVideoSourceLabel !== "缓存") {
+      setNativePreviewVideoSourceLabel(undefined);
+      setNativePreviewVideoSourceUri(undefined);
+    }
+  };
+
+  /**
+   * Replaces the current native video source with a fresh direct URL.
+   */
+  const retryNativePreviewVideoWithRemoteSource = async (
+    file: FolderFileSummary,
+    fileKey: string,
+    options: { forceRefreshAuth?: boolean } = {},
+  ): Promise<boolean> => {
+    const requestId = nativePreviewVideoLoadRequestRef.current + 1;
+
+    nativePreviewVideoLoadRequestRef.current = requestId;
+    setNativePreviewVideoPlaybackKey(fileKey);
+    setNativePreviewVideoRequestKey(fileKey);
+
+    const authCode = await ensureMediaAuthCode({
+      forceRefresh: options.forceRefreshAuth,
+    });
+
+    if (nativePreviewVideoLoadRequestRef.current !== requestId) {
+      return true;
+    }
+
+    const remoteSourceUri = createVideoPlaybackUrlForFile(file, authCode);
+
+    if (!remoteSourceUri) {
+      return false;
+    }
+
+    setNativePreviewVideoOpen(true);
+    setNativePreviewVideoSourceLabel("接口");
+    setNativePreviewVideoSourceUri(remoteSourceUri);
+    return true;
+  };
+
+  /**
+   * Falls back from stale cache or stale auth before surfacing native player errors.
+   */
+  const handleNativePreviewVideoLoadError = async (
+    messageText: string,
+  ): Promise<void> => {
+    const file = previewFile;
+    const fileKey = file ? createFileSelectionKey(file) : undefined;
+
+    if (file && fileKey && nativePreviewVideoPlaybackKey === fileKey) {
+      if (nativePreviewVideoSourceLabel === "缓存") {
+        showPreviewNotice("本地视频缓存不可用，正在切换接口播放");
+
+        if (await retryNativePreviewVideoWithRemoteSource(file, fileKey)) {
+          return;
+        }
+      }
+
+      if (
+        nativePreviewVideoSourceLabel === "接口" &&
+        isDirectVideoPreviewSupported(file) &&
+        nativePreviewVideoAuthRetryKeyRef.current !== fileKey
+      ) {
+        nativePreviewVideoAuthRetryKeyRef.current = fileKey;
+        showPreviewNotice("视频授权已刷新，正在重试播放");
+
+        if (
+          await retryNativePreviewVideoWithRemoteSource(file, fileKey, {
+            forceRefreshAuth: true,
+          })
+        ) {
+          return;
+        }
+      }
+    }
+
+    setNativePreviewVideoOpen(false);
+    setNativePreviewVideoPlaybackKey(undefined);
+    setNativePreviewVideoPosterUri(undefined);
+    setNativePreviewVideoRequestKey(undefined);
+    setNativePreviewVideoSourceLabel(undefined);
+    setNativePreviewVideoSourceUri(undefined);
+    showPreviewNotice(messageText);
+  };
+
+  const renderVideoPreviewOverlay = ({
     imageIndex,
   }: {
     imageIndex: number;
   }) => {
     const overlayFile = previewImageGalleryItems[imageIndex]?.file;
+    const overlayFileKey = overlayFile
+      ? createFileSelectionKey(overlayFile)
+      : undefined;
 
     if (
+      !nativePreviewVideoMounted ||
       !overlayFile ||
       !isVideoFile(overlayFile) ||
-      previewInfoVisible ||
-      nativePreviewVideoOpen
+      overlayFileKey !== previewFileKey
     ) {
       return null;
     }
 
-    const overlayFileKey = createFileSelectionKey(overlayFile);
-    const overlayVideoLoading = nativePreviewVideoRequestKey === overlayFileKey;
+    const videoPlayEnabled = !previewInfoVisible;
 
     return (
-      <View pointerEvents="box-none" style={styles.previewPosterActionStack}>
-        <Pressable
-          accessibilityLabel="播放视频"
-          disabled={overlayVideoLoading}
-          onPress={() => void handleOpenNativePreviewVideo(overlayFile)}
-          style={[
-            styles.previewPosterPlayButton,
-            overlayVideoLoading ? styles.previewPosterPlayButtonLoading : null,
-          ]}
-        >
-          {overlayVideoLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Ionicons color="#fff" name="play" size={30} />
-          )}
-        </Pressable>
-      </View>
+      <NativeVideoControlsOverlay
+        enhancedPosterUri={nativePreviewVideoPosterUri}
+        mounted
+        onClose={closeNativePreviewVideoLayer}
+        onLoadComplete={() => {
+          setNativePreviewVideoRequestKey(undefined);
+          setNativePreviewVideoOpen(true);
+        }}
+        onLoadError={(messageText) => {
+          void handleNativePreviewVideoLoadError(messageText);
+        }}
+        onPlayPress={
+          videoPlayEnabled
+            ? () => void handleOpenNativePreviewVideo(overlayFile)
+            : undefined
+        }
+        playLoading={
+          videoPlayEnabled && nativePreviewVideoRequestKey === previewFileKey
+        }
+        playbackKey={nativePreviewVideoPlaybackKey ?? previewFileKey}
+        posterUri={previewVideoCoverUri}
+        sourceLabel={nativePreviewVideoSourceLabel}
+        sourceUri={nativePreviewVideoSourceUri}
+        visible={nativePreviewVideoOpen}
+      />
     );
   };
-
-  const renderVideoPreviewOverlay = () => (
-    <NativeVideoControlsOverlay
-      onClose={() => {
-        nativePreviewVideoLoadRequestRef.current += 1;
-        setNativePreviewVideoOpen(false);
-        setNativePreviewVideoPlaybackKey(undefined);
-        setNativePreviewVideoPosterUri(undefined);
-        setNativePreviewVideoRequestKey(undefined);
-        setNativePreviewVideoSourceLabel(undefined);
-        setNativePreviewVideoSourceUri(undefined);
-      }}
-      onLoadComplete={() => {
-        setNativePreviewVideoRequestKey(undefined);
-        setNativePreviewVideoOpen(true);
-      }}
-      onLoadError={(messageText) => {
-        setNativePreviewVideoOpen(false);
-        setNativePreviewVideoPlaybackKey(undefined);
-        setNativePreviewVideoPosterUri(undefined);
-        setNativePreviewVideoRequestKey(undefined);
-        setNativePreviewVideoSourceLabel(undefined);
-        setNativePreviewVideoSourceUri(undefined);
-        showPreviewNotice(messageText);
-      }}
-      playbackKey={nativePreviewVideoPlaybackKey}
-      posterUri={nativePreviewVideoPosterUri}
-      sourceLabel={nativePreviewVideoSourceLabel}
-      sourceUri={nativePreviewVideoSourceUri}
-      visible={nativePreviewVideoOpen}
-    />
-  );
 
   const renderImagePreviewHeader = () => {
     if (previewVideoPlaybackActive) {
@@ -3533,11 +3855,12 @@ const MobileFolderDirectoryScreen = ({
 
             return `${file?.id ?? imageIndex}-${file?.md5 ?? imageIndex}`;
           }}
-          ItemOverlayComponent={renderImagePreviewItemOverlay}
           onImageIndexChange={handleImagePreviewIndexChange}
           onRequestClose={closePreview}
+          onSwipeStart={closeNativePreviewVideoLayer}
           OverlayComponent={renderVideoPreviewOverlay}
           presentationStyle="overFullScreen"
+          shouldRenderImageItem={shouldRenderPreviewImageItem}
           swipeToCloseEnabled
           visible={previewUsesImageViewer}
         />

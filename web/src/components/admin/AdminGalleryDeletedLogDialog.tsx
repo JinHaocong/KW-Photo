@@ -1,6 +1,5 @@
-import { X } from 'lucide-react';
-
-import type { AdminFileDeleteLogPage } from '../../services/admin-service';
+import { formatAdminUserName } from '../../services/admin-service';
+import type { AdminFileDeleteLogPage, AdminUserRecord } from '../../services/admin-service';
 import { Modal } from '../Modal';
 
 interface AdminGalleryDeletedLogDialogProps {
@@ -11,6 +10,7 @@ interface AdminGalleryDeletedLogDialogProps {
   onLoadPage: (pageNo?: number) => void;
   open: boolean;
   page?: AdminFileDeleteLogPage;
+  users: AdminUserRecord[];
 }
 
 /**
@@ -24,6 +24,7 @@ export const AdminGalleryDeletedLogDialog = ({
   onLoadPage,
   open,
   page,
+  users,
 }: AdminGalleryDeletedLogDialogProps) => {
   const hasPrevious = Boolean(page && page.pageNo > 1);
   const hasNext = Boolean(page && page.pageNo * page.pageSize < page.count);
@@ -83,7 +84,7 @@ export const AdminGalleryDeletedLogDialog = ({
         {page && page.list.length === 0 ? <div className="admin-state compact">无文件删除记录</div> : null}
         {page?.list.map((log) => (
           <div className="admin-delete-log-row" key={log.id}>
-            <span>{log.operator}</span>
+            <span>{formatAdminUserName(users, log.operatorId, log.operator)}</span>
             <span>{formatDateTime(log.deleteTime)}</span>
             <span>{log.deleteType}</span>
             <span title={log.filePath}>{log.filePath}</span>

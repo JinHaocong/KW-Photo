@@ -1,6 +1,11 @@
 import { create } from 'zustand';
+import {
+  PreferredServerUnavailableError,
+  selectPreferredServer,
+  type PreferredServerCandidate,
+} from '@kwphoto/core';
 
-import { getApiErrorMessage } from '../services/api-client';
+import { ApiRequestError, getApiErrorMessage } from '../services/api-client';
 import {
   fetchApiInfo,
   fetchCurrentUser,
@@ -12,9 +17,9 @@ import { clearSessionSnapshot, loadSessionSnapshot, saveSessionSnapshot } from '
 import type { ApiInfo, AuthTokens, CurrentUser, SessionSnapshot, SessionStatus } from '../shared/types';
 import {
   getPreferredServerUrl,
-  getServerAddressCandidates,
   readLoginPreferences,
   readServerAddressPreferences,
+  type WorkspaceServerAddressPreferenceRole,
 } from '../shared/workspace-preferences';
 
 interface SessionState extends SessionSnapshot {
@@ -29,15 +34,15 @@ interface SessionState extends SessionSnapshot {
   switchServerUrl: (serverUrl: string) => Promise<void>;
 }
 
-type SessionGet = () => SessionState;
 type SessionSet = (state: Partial<SessionState>) => void;
 
 const DEFAULT_SERVER_URL = 'https://d.mtmt.tech';
+const SESSION_RECOVERY_TIMEOUT_MS = 2000;
 const getInitialServerUrl = (): string => {
-  const preferredServerUrl = getPreferredServerUrl(readServerAddressPreferences());
   const loginServerUrl = readLoginPreferences().serverUrl;
+  const preferredServerUrl = getPreferredServerUrl(readServerAddressPreferences());
 
-  return preferredServerUrl || loginServerUrl || DEFAULT_SERVER_URL;
+  return loginServerUrl || preferredServerUrl || DEFAULT_SERVER_URL;
 };
 const initialServerUrl = getInitialServerUrl();
 let hydratePromise: Promise<void> | undefined;
@@ -59,19 +64,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const snapshot = loadSessionSnapshot();
 
       if (!snapshot?.serverUrl || !snapshot.tokens?.refreshToken) {
-        set({ serverUrl: await resolveReachablePublicServerUrl(snapshot?.serverUrl), status: 'guest' });
+        set({ serverUrl: getInitialServerUrl(), status: 'guest' });
         return;
       }
 
       try {
-        await hydrateAuthenticatedSession(snapshot, set, get);
+        await hydrateAuthenticatedSession(snapshot, set);
       } catch (error) {
-        clearSessionSnapshot();
+        if (shouldClearSessionAfterRecoveryError(error)) {
+          clearSessionSnapshot();
+          set({
+            error: getApiErrorMessage(error),
+            status: 'guest',
+            tokens: undefined,
+            user: undefined,
+          });
+          return;
+        }
+
         set({
+          ...snapshot,
           error: getApiErrorMessage(error),
-          status: 'guest',
-          tokens: undefined,
-          user: undefined,
+          status: 'authenticated',
         });
       }
     })().finally(() => {
@@ -222,84 +236,105 @@ const toSnapshot = (state: Partial<SessionState>): SessionSnapshot => {
 };
 
 /**
- * Restores auth against the first configured server that is both reachable and token-valid.
+ * Restores auth after selecting a reachable primary/backup server in one parallel probe window.
  */
 const hydrateAuthenticatedSession = async (
   snapshot: SessionSnapshot,
   set: SessionSet,
-  get: SessionGet,
 ): Promise<void> => {
-  let lastError: unknown;
+  const { candidates, preferredRole } = getRuntimeServerRecoveryConfig(snapshot.serverUrl);
 
-  for (const serverUrl of getRuntimeServerCandidates(snapshot.serverUrl)) {
-    const candidateSnapshot = {
-      ...snapshot,
-      serverUrl,
-      tokens: snapshot.tokens,
-    };
+  set({ ...snapshot, status: 'checking', error: undefined });
 
-    set({ ...candidateSnapshot, status: 'checking', error: undefined });
+  const selectedServer = await selectPreferredServer<ApiInfo>({
+    candidates,
+    preferredRole,
+    probeCandidate: (candidate) => fetchApiInfo(candidate.url),
+    timeoutMs: SESSION_RECOVERY_TIMEOUT_MS,
+  });
+  const nextSnapshot = await createSessionForServer(snapshot, selectedServer.candidate.url, selectedServer.value, {
+    refreshFirst: true,
+  });
 
-    try {
-      const accessToken = await get().refresh();
+  commitSession(set, nextSnapshot);
+};
 
-      if (!accessToken) {
-        lastError = new Error('登录状态已过期');
-        continue;
-      }
-
-      const user = await fetchCurrentUser({
-        baseUrl: serverUrl,
-        getAccessToken: () => get().tokens?.accessToken,
-        onUnauthorized: get().refresh,
-      });
-
-      commitSession(set, {
-        ...candidateSnapshot,
-        user,
-        tokens: get().tokens,
-      });
-      return;
-    } catch (error) {
-      lastError = error;
-    }
+const createSessionForServer = async (
+  snapshot: SessionSnapshot,
+  serverUrl: string,
+  apiInfo: ApiInfo,
+  options: { refreshFirst?: boolean } = {},
+): Promise<SessionSnapshot> => {
+  if (!snapshot.tokens?.refreshToken) {
+    throw new Error('登录状态已过期');
   }
 
-  throw lastError ?? new Error('无法恢复登录状态');
+  const tokensRef = { current: snapshot.tokens };
+
+  if (options.refreshFirst) {
+    tokensRef.current = await refreshAuthTokens(serverUrl, tokensRef.current);
+  }
+
+  const user = await fetchCurrentUser({
+    baseUrl: serverUrl,
+    getAccessToken: () => tokensRef.current.accessToken,
+    onUnauthorized: async () => {
+      const nextTokens = await refreshAuthTokens(serverUrl, tokensRef.current);
+
+      tokensRef.current = nextTokens;
+      return nextTokens.accessToken;
+    },
+  });
+
+  return {
+    ...snapshot,
+    apiInfo,
+    serverUrl,
+    tokens: tokensRef.current,
+    user,
+  };
 };
 
 /**
- * Resolves the login screen server by testing configured addresses in preference order.
+ * Converts saved workspace server settings into primary/backup recovery candidates.
  */
-const resolveReachablePublicServerUrl = async (fallbackUrl?: string): Promise<string> => {
-  const candidates = getRuntimeServerCandidates(fallbackUrl);
+const getRuntimeServerRecoveryConfig = (
+  fallbackUrl?: string,
+): { candidates: PreferredServerCandidate[]; preferredRole: WorkspaceServerAddressPreferenceRole } => {
+  const preferences = readServerAddressPreferences();
+  const primaryUrl = normalizeServerUrl(preferences.primaryUrl || fallbackUrl || getInitialServerUrl());
+  const backupUrl = normalizeServerUrl(preferences.backupUrl);
 
-  if (candidates.length === 0) {
-    return DEFAULT_SERVER_URL;
-  }
-
-  try {
-    return await Promise.any(
-      candidates.map(async (serverUrl) => {
-        await fetchApiInfo(serverUrl);
-        return serverUrl;
-      }),
-    );
-  } catch {
-    return candidates[0] ?? DEFAULT_SERVER_URL;
-  }
+  return {
+    candidates: createServerRecoveryCandidates(primaryUrl, backupUrl, preferences.preferred),
+    preferredRole: preferences.preferred,
+  };
 };
 
-const getRuntimeServerCandidates = (fallbackUrl?: string): string[] => {
-  return normalizeServerUrlList([
-    ...getServerAddressCandidates(readServerAddressPreferences()),
-    fallbackUrl,
-    getInitialServerUrl(),
-  ]);
+/**
+ * Creates at most one candidate per configured primary/backup role.
+ */
+const createServerRecoveryCandidates = (
+  primaryUrl: string,
+  backupUrl: string,
+  preferredRole: WorkspaceServerAddressPreferenceRole,
+): PreferredServerCandidate[] => {
+  if (primaryUrl && backupUrl && primaryUrl === backupUrl) {
+    return [{ role: preferredRole, url: primaryUrl }];
+  }
+
+  return [
+    primaryUrl ? { role: 'primary' as const, url: primaryUrl } : undefined,
+    backupUrl ? { role: 'backup' as const, url: backupUrl } : undefined,
+  ].filter(Boolean) as PreferredServerCandidate[];
 };
 
-const normalizeServerUrlList = (serverUrls: Array<string | undefined>): string[] => {
-  return Array.from(new Set(serverUrls.map((serverUrl) => normalizeServerUrl(serverUrl ?? '')).filter(Boolean)));
+/**
+ * Limits automatic logout to confirmed session-expired or no-server-available recovery failures.
+ */
+const shouldClearSessionAfterRecoveryError = (error: unknown): boolean => {
+  return error instanceof PreferredServerUnavailableError ||
+    (error instanceof ApiRequestError && error.statusCode === 401);
 };
 
 const normalizeServerUrl = (serverUrl: string): string => {

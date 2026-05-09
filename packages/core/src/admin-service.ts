@@ -85,6 +85,12 @@ export interface AdminDuplicateFileRecord {
   takenAt?: string;
 }
 
+export interface AdminDuplicateFileDeletePayload {
+  galleryIds: number[];
+  id: number;
+  md5: string;
+}
+
 export interface AdminFileDeleteLogPage {
   count: number;
   list: AdminFileDeleteLogRecord[];
@@ -99,6 +105,7 @@ export interface AdminFileDeleteLogRecord {
   filePath: string;
   id: number | string;
   operator: string;
+  operatorId?: number | string;
 }
 
 export interface AdminDeletedFileRecord {
@@ -658,6 +665,25 @@ export const findAdminDuplicateFiles = (
 };
 
 /**
+ * Deletes one duplicate file record through the gallery cleanup endpoint.
+ * @param options Authenticated API client options.
+ * @param payload Duplicate file id, md5 and gallery ids required by the server.
+ */
+export const deleteAdminDuplicateFile = (
+  options: ApiClientOptions,
+  payload: AdminDuplicateFileDeletePayload,
+): Promise<unknown> => {
+  return createApiClient(options).request<unknown>('/gallery/deleteDuplicateFiles', {
+    body: {
+      MD5: payload.md5,
+      galleryIds: payload.galleryIds,
+      id: payload.id,
+    },
+    method: 'POST',
+  });
+};
+
+/**
  * Exports deleted file previews on the server.
  * @param options Authenticated API client options.
  */
@@ -1013,6 +1039,26 @@ export const fetchAdminUsers = async (options: ApiClientOptions): Promise<AdminU
 };
 
 /**
+ * Resolves an admin user id to the username shown in cross-platform admin UI.
+ * @param users Loaded admin users.
+ * @param userId User id from server records.
+ * @param fallback Text shown when the user cannot be found.
+ */
+export const formatAdminUserName = (
+  users: AdminUserRecord[],
+  userId?: number | string,
+  fallback = '-',
+): string => {
+  if (userId === undefined || userId === null || userId === '') {
+    return fallback;
+  }
+
+  const matchedUser = users.find((user) => String(user.id) === String(userId));
+
+  return matchedUser?.username || fallback;
+};
+
+/**
  * Fetches server system status and returns compact key-value rows.
  * @param options Authenticated API client options.
  * @returns Displayable system info rows.
@@ -1328,6 +1374,11 @@ const normalizeDuplicateFileList = (payload: unknown): AdminDuplicateFileRecord[
 const normalizeFileDeleteLog = (item: unknown, index: number): AdminFileDeleteLogRecord => {
   const record = toRecord(item);
   const userRecord = toRecord(record.user);
+  const operatorId = readStringOrNumber(record, ['userId', 'operatorId', 'operator_id', 'user_id'])
+    ?? readStringOrNumber(userRecord, ['id', 'userId', 'uid'])
+    ?? readStringOrNumber(record, ['user']);
+  const operatorName = readString(record, ['username', 'operator', 'userName', 'operatorName'])
+    || readString(userRecord, ['username', 'name', 'nickname']);
 
   return {
     deleteTime: readString(record, ['deleteTime', 'created_at', 'createdAt', 'time']),
@@ -1335,9 +1386,8 @@ const normalizeFileDeleteLog = (item: unknown, index: number): AdminFileDeleteLo
     fileName: readString(record, ['fileName', 'name']) || '-',
     filePath: readString(record, ['filePath', 'path']) || '-',
     id: readStringOrNumber(record, ['id', 'logId']) ?? index + 1,
-    operator: readString(record, ['username', 'operator', 'userName'])
-      || readString(userRecord, ['username', 'name'])
-      || String(readStringOrNumber(record, ['userId']) ?? '-'),
+    operator: operatorName || (operatorId !== undefined ? `用户 ${operatorId}` : '-'),
+    operatorId,
   };
 };
 

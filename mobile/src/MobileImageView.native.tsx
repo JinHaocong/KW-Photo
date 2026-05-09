@@ -30,8 +30,10 @@ interface MobileImageViewProps {
   onImageIndexChange?: (imageIndex: number) => void;
   onLongPress?: (image: ImageViewSource) => void;
   onRequestClose: () => void;
+  onSwipeStart?: () => void;
   OverlayComponent?: ComponentType<{ imageIndex: number }>;
   presentationStyle?: ModalProps['presentationStyle'];
+  shouldRenderImageItem?: (imageIndex: number) => boolean;
   swipeToCloseEnabled?: boolean;
   visible: boolean;
 }
@@ -58,8 +60,10 @@ const MobileImageView = ({
   onImageIndexChange,
   onLongPress = () => undefined,
   onRequestClose,
+  onSwipeStart,
   OverlayComponent,
   presentationStyle,
+  shouldRenderImageItem,
   swipeToCloseEnabled,
   visible,
 }: MobileImageViewProps) => {
@@ -121,35 +125,42 @@ const MobileImageView = ({
           )}
           maxToRenderPerBatch={1}
           onMomentumScrollEnd={onScroll}
+          onScrollBeginDrag={onSwipeStart}
           pagingEnabled
           ref={imageListRef}
-          renderItem={({ item, index }) => (
-            <View style={styles.itemFrame}>
-              <ImageItem
-                delayLongPress={DEFAULT_DELAY_LONG_PRESS}
-                doubleTapToZoomEnabled={doubleTapToZoomEnabled}
-                imageSrc={item}
-                onLongPress={onLongPress}
-                onRequestClose={onRequestCloseEnhanced}
-                onZoom={handleZoom}
-                swipeToCloseEnabled={swipeToCloseEnabled}
-              />
-              {ItemOverlayComponent ? (
-                <View pointerEvents="box-none" style={styles.itemOverlay}>
-                  <ItemOverlayComponent imageIndex={index} />
-                </View>
-              ) : null}
-            </View>
-          )}
+          renderItem={({ item, index }) => {
+            const renderImageItem = shouldRenderImageItem?.(index) ?? true;
+
+            return (
+              <View style={styles.itemFrame}>
+                {renderImageItem ? (
+                  <ImageItem
+                    delayLongPress={DEFAULT_DELAY_LONG_PRESS}
+                    doubleTapToZoomEnabled={doubleTapToZoomEnabled}
+                    imageSrc={item}
+                    onLongPress={onLongPress}
+                    onRequestClose={onRequestCloseEnhanced}
+                    onZoom={handleZoom}
+                    swipeToCloseEnabled={swipeToCloseEnabled}
+                  />
+                ) : null}
+                {OverlayComponent ? (
+                  <View pointerEvents="box-none" style={styles.itemOverlay}>
+                    <OverlayComponent imageIndex={index} />
+                  </View>
+                ) : null}
+                {ItemOverlayComponent ? (
+                  <View pointerEvents="box-none" style={styles.itemOverlay}>
+                    <ItemOverlayComponent imageIndex={index} />
+                  </View>
+                ) : null}
+              </View>
+            );
+          }}
           showsHorizontalScrollIndicator={false}
           showsVerticalScrollIndicator={false}
           windowSize={2}
         />
-        {OverlayComponent ? (
-          <View pointerEvents="box-none" style={styles.overlay}>
-            <OverlayComponent imageIndex={currentImageIndex} />
-          </View>
-        ) : null}
         {FooterComponent ? (
           <View style={styles.footer}>
             <FooterComponent imageIndex={currentImageIndex} />
@@ -188,10 +199,6 @@ const styles = StyleSheet.create({
   itemOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 2,
   },
 });
 

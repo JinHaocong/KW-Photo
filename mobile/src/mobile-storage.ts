@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 import { ADMIN_TAB_KEYS, isAdminTab } from '@kwphoto/core';
-import type { AdminTab } from '@kwphoto/core';
+import type { AdminTab, PreferredServerCandidate } from '@kwphoto/core';
 
 import type { MobilePage, MobileSession } from './mobile-types';
 
@@ -11,6 +11,8 @@ export type MobileFolderSortDirection = 'ASC' | 'DESC';
 export type MobileFolderSortField = 'tokenAt' | 'mtime' | 'fileName' | 'size' | 'fileType';
 export type MobileFolderViewMode = 'grid' | 'list';
 export type MobileAdminTab = AdminTab;
+export type MobileDuplicateFilesAutoSelectMode = 'order' | 'mtime' | 'token_at' | 'path';
+export type MobileDuplicateFilesPageSize = 10 | 20 | 50 | 100 | 500 | 1000;
 export type MobileExternalVideoPlayer = 'none' | 'infuse';
 export type MobileServerAddressRole = 'primary' | 'backup';
 export type MobileThemeName =
@@ -33,12 +35,16 @@ export interface MobilePreferences {
   activeTheme?: MobileThemeName;
   backupServerUrl?: string;
   currentFolderId?: number;
+  duplicateFilesAutoSelectMode?: MobileDuplicateFilesAutoSelectMode;
+  duplicateFilesPageSize?: MobileDuplicateFilesPageSize;
+  duplicateFilesShowThumbnails?: boolean;
   externalVideoPlayer?: MobileExternalVideoPlayer;
   folderCardSize?: MobileFolderCardSize;
   folderSortDirection?: MobileFolderSortDirection;
   folderSortField?: MobileFolderSortField;
   folderViewMode?: MobileFolderViewMode;
   lastUsername?: string;
+  loginServerUrl?: string;
   localCacheEnabled?: boolean;
   mobileMenuPages?: MobilePage[];
   preferredServerAddress?: MobileServerAddressRole;
@@ -177,6 +183,7 @@ export const resetMobileBehaviorPreferences = async (): Promise<MobilePreference
     folderSortField: current.folderSortField,
     folderViewMode: current.folderViewMode,
     lastUsername: current.lastUsername,
+    loginServerUrl: current.loginServerUrl,
     localCacheEnabled: current.localCacheEnabled,
     mobileMenuPages: current.mobileMenuPages,
     preferredServerAddress: current.preferredServerAddress,
@@ -248,6 +255,27 @@ export const getMobileRuntimeServerCandidates = (
     preferences.serverUrl,
     DEFAULT_MOBILE_SERVER_URL,
   ]);
+};
+
+/**
+ * Builds the primary/backup recovery candidates used by authenticated startup recovery.
+ */
+export const getMobileServerRecoveryCandidates = (
+  preferences: MobilePreferences,
+  fallbackUrl?: string,
+): PreferredServerCandidate[] => {
+  const preferredRole = preferences.preferredServerAddress ?? 'primary';
+  const primaryUrl = normalizeMobileServerAddress(preferences.primaryServerUrl || fallbackUrl);
+  const backupUrl = normalizeMobileServerAddress(preferences.backupServerUrl);
+
+  if (primaryUrl && backupUrl && primaryUrl === backupUrl) {
+    return [{ role: preferredRole, url: primaryUrl }];
+  }
+
+  return [
+    primaryUrl ? { role: 'primary' as const, url: primaryUrl } : undefined,
+    backupUrl ? { role: 'backup' as const, url: backupUrl } : undefined,
+  ].filter(Boolean) as PreferredServerCandidate[];
 };
 
 const parseJson = <TValue>(value: string | null | undefined): TValue | undefined => {

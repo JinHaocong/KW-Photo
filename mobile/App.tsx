@@ -22,17 +22,20 @@ import {
 import type { ApiInfo, AuthTokens } from '@kwphoto/core';
 import {
   ApiRequestError,
+  PreferredServerUnavailableError,
   fetchApiInfo,
   fetchCurrentUser,
   getApiErrorMessage,
   loginWithPassword,
   refreshAuthTokens,
+  selectPreferredServer,
 } from '@kwphoto/core';
 
 import {
   clearMobileSession,
   DEFAULT_MOBILE_SERVER_URL,
   getMobileRuntimeServerCandidates,
+  getMobileServerRecoveryCandidates,
   mergeMobilePreferences,
   normalizeMobileServerAddress,
   readMobilePreferences,
@@ -131,15 +134,24 @@ export default function App() {
             void writeMobileSession(nextSession);
             void mergeMobilePreferences({ serverUrl: nextSession.serverUrl });
           } catch (error) {
-            await clearMobileSession();
+            const shouldLogout = isSessionRecoveryLogoutError(error);
+
+            if (shouldLogout) {
+              await clearMobileSession();
+            }
 
             if (!mounted) {
               return;
             }
 
-            setApiInfo(undefined);
-            setSession(undefined);
-            setServerUrl(getInitialMobileServerUrl(preferences, storedSession.serverUrl));
+            if (shouldLogout) {
+              setApiInfo(undefined);
+              setSession(undefined);
+              setServerUrl(getInitialMobileServerUrl(preferences, storedSession.serverUrl));
+            } else {
+              setSession(storedSession);
+            }
+
             setMessage(getApiErrorMessage(error));
           }
 
@@ -172,8 +184,10 @@ export default function App() {
       const info = await fetchApiInfo(normalizedServerUrl);
 
       setApiInfo(info);
-      setServerUrl(normalizedServerUrl);
-      void mergeMobilePreferences({ serverUrl: normalizedServerUrl });
+      void mergeMobilePreferences({
+        loginServerUrl: serverUrl,
+        serverUrl: normalizedServerUrl,
+      });
       setMessage(`已连接 ${normalizedServerUrl}`);
     } catch (error) {
       setMessage(getApiErrorMessage(error));
@@ -215,6 +229,7 @@ export default function App() {
       void writeMobileSession(nextSession);
       void mergeMobilePreferences({
         lastUsername: username.trim(),
+        loginServerUrl: serverUrl,
         serverUrl: normalizedServerUrl,
       });
       setMessage('登录成功');
@@ -226,12 +241,15 @@ export default function App() {
   };
 
   /**
-   * Clears only in-memory mobile state for the current MVP shell.
+   * Clears the authenticated mobile state and restores the login-page address cache.
    */
   const handleLogout = (): void => {
     setSession(undefined);
     setMessage('');
     void clearMobileSession();
+    void readMobilePreferences().then((preferences) => {
+      setServerUrl(getInitialMobileServerUrl(preferences, session?.serverUrl));
+    });
   };
 
   /**
@@ -274,7 +292,7 @@ export default function App() {
       await writeMobileSession(nextSession);
       await mergeMobilePreferences({ serverUrl: nextSession.serverUrl });
     } catch (error) {
-      if (isSessionInvalidError(error)) {
+      if (isSessionRecoveryLogoutError(error)) {
         await clearMobileSession();
         setApiInfo(undefined);
         setSession(undefined);
@@ -654,27 +672,23 @@ const ApiInfoCard = ({ apiInfo, theme }: { apiInfo: ApiInfo; theme: typeof DEFAU
 };
 
 /**
- * Restores an authenticated session against the first reachable and token-valid server.
+ * Restores an authenticated session after selecting a reachable primary/backup server.
  */
 const hydrateAuthenticatedMobileSession = async (
   storedSession: MobileSession,
   preferences: MobilePreferences,
 ): Promise<MobileSession> => {
-  let lastError: unknown;
+  const selectedServer = await selectPreferredServer<ApiInfo>({
+    candidates: getMobileServerRecoveryCandidates(preferences, storedSession.serverUrl),
+    preferredRole: preferences.preferredServerAddress ?? 'primary',
+    probeCandidate: (candidate) => fetchApiInfo(candidate.url),
+    timeoutMs: MOBILE_SESSION_RESTORE_TIMEOUT_MS,
+  });
 
-  for (const candidate of getMobileRuntimeServerCandidates(preferences, storedSession.serverUrl)) {
-    try {
-      return await withTimeout(
-        createMobileSessionForServer(storedSession, candidate, { refreshFirst: true }),
-        MOBILE_SESSION_RESTORE_TIMEOUT_MS,
-        '服务器探活超时，请稍后重试',
-      );
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError ?? new Error('无法恢复登录状态');
+  return createMobileSessionForServer(storedSession, selectedServer.candidate.url, {
+    apiInfo: selectedServer.value,
+    refreshFirst: true,
+  });
 };
 
 /**
@@ -683,10 +697,10 @@ const hydrateAuthenticatedMobileSession = async (
 const createMobileSessionForServer = async (
   sourceSession: MobileSession,
   serverUrl: string,
-  options: { refreshFirst?: boolean } = {},
+  options: { apiInfo?: ApiInfo; refreshFirst?: boolean } = {},
 ): Promise<MobileSession> => {
   const normalizedServerUrl = normalizeMobileServerAddress(serverUrl);
-  const apiInfo = await fetchApiInfo(normalizedServerUrl);
+  const apiInfo = options.apiInfo ?? await fetchApiInfo(normalizedServerUrl);
   const tokensRef = { current: sourceSession.tokens };
 
   if (options.refreshFirst) {
@@ -714,9 +728,13 @@ const createMobileSessionForServer = async (
 };
 
 /**
- * Picks the first saved server address without touching the network during startup.
+ * Picks the saved login-page input before runtime server candidates.
  */
 const getInitialMobileServerUrl = (preferences: MobilePreferences, fallbackUrl?: string): string => {
+  if (typeof preferences.loginServerUrl === 'string' && preferences.loginServerUrl) {
+    return preferences.loginServerUrl;
+  }
+
   return getMobileRuntimeServerCandidates(preferences, fallbackUrl)[0] ?? DEFAULT_MOBILE_SERVER_URL;
 };
 
@@ -738,34 +756,11 @@ const normalizeServerUrl = (value: string): string => {
 };
 
 /**
- * Keeps mobile session recovery from blocking the foreground overlay on one slow server candidate.
+ * Distinguishes errors that should drop the saved mobile session during recovery.
  */
-const withTimeout = async <TValue,>(
-  promise: Promise<TValue>,
-  timeoutMs: number,
-  messageText: string,
-): Promise<TValue> => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(messageText)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-};
-
-/**
- * Distinguishes expired credentials from temporary foreground network failures.
- */
-const isSessionInvalidError = (error: unknown): boolean => {
-  return error instanceof ApiRequestError && error.statusCode === 401;
+const isSessionRecoveryLogoutError = (error: unknown): boolean => {
+  return error instanceof PreferredServerUnavailableError ||
+    (error instanceof ApiRequestError && error.statusCode === 401);
 };
 
 const styles = StyleSheet.create({

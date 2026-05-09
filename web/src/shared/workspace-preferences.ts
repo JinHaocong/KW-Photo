@@ -34,6 +34,8 @@ const VIEW_MODES: ViewMode[] = ['timeline', 'grid', 'list'];
 const FOLDER_CARD_SIZES: FolderCardSize[] = ['small', 'medium', 'large'];
 const FOLDER_SORT_FIELDS: FolderSortField[] = ['tokenAt', 'mtime', 'fileName', 'size', 'fileType'];
 const SORT_DIRECTIONS: SortDirection[] = ['DESC', 'ASC'];
+const DUPLICATE_FILES_PAGE_SIZES = [10, 20, 50, 100, 500, 1000] as const;
+const DUPLICATE_FILES_AUTO_SELECT_MODES = ['order', 'mtime', 'token_at', 'path'] as const;
 const ADMIN_TABS: AdminTab[] = [...ADMIN_TAB_KEYS];
 const MOBILE_MENU_MIN_COUNT = 3;
 const MOBILE_MENU_MAX_COUNT = 6;
@@ -53,6 +55,21 @@ export interface WorkspacePreferences {
 
 export interface WorkspaceAdminPreferences {
   activeTab: AdminTab;
+  duplicateFiles: WorkspaceDuplicateFilesPreferences;
+}
+
+export interface WorkspaceAdminPreferencePatch {
+  activeTab?: AdminTab;
+  duplicateFiles?: Partial<WorkspaceDuplicateFilesPreferences>;
+}
+
+export type WorkspaceDuplicateFilesAutoSelectMode = (typeof DUPLICATE_FILES_AUTO_SELECT_MODES)[number];
+export type WorkspaceDuplicateFilesPageSize = (typeof DUPLICATE_FILES_PAGE_SIZES)[number];
+
+export interface WorkspaceDuplicateFilesPreferences {
+  autoSelectMode: WorkspaceDuplicateFilesAutoSelectMode;
+  pageSize: WorkspaceDuplicateFilesPageSize;
+  showThumbnails: boolean;
 }
 
 export interface WorkspaceFolderSortPreference {
@@ -100,6 +117,11 @@ const DEFAULT_FOLDER_VIEW_PREFERENCE: WorkspaceFolderViewPreference = {
 const DEFAULT_WORKSPACE_PREFERENCES: WorkspacePreferences = {
   admin: {
     activeTab: 'overview',
+    duplicateFiles: {
+      autoSelectMode: 'order',
+      pageSize: 1000,
+      showThumbnails: true,
+    },
   },
   activePage: 'photos',
   activeTheme: 'green',
@@ -185,8 +207,19 @@ export const readAdminPreferences = (): WorkspaceAdminPreferences => {
 /**
  * Persists admin-center preferences into the unified workspace preference object.
  */
-export const writeAdminPreferences = (preferences: WorkspaceAdminPreferences): void => {
-  saveWorkspacePreferences({ admin: parseAdminPreferences(preferences) });
+export const writeAdminPreferences = (preferences: WorkspaceAdminPreferencePatch): void => {
+  const currentPreferences = readAdminPreferences();
+
+  saveWorkspacePreferences({
+    admin: parseAdminPreferences({
+      ...currentPreferences,
+      ...preferences,
+      duplicateFiles: {
+        ...currentPreferences.duplicateFiles,
+        ...preferences.duplicateFiles,
+      },
+    }),
+  });
 };
 
 /**
@@ -228,7 +261,6 @@ export const readServerAddressPreferences = (): WorkspaceServerAddressPreference
  * Persists server address preferences and records every saved primary/backup address.
  */
 export const writeServerAddressPreferences = (preferences: WorkspaceServerAddressPreferences): void => {
-  const currentPreferences = loadWorkspacePreferences();
   const serverAddresses = parseServerAddressPreferences({
     ...preferences,
     history: [
@@ -237,13 +269,8 @@ export const writeServerAddressPreferences = (preferences: WorkspaceServerAddres
       preferences.backupUrl,
     ],
   });
-  const preferredServerUrl = getPreferredServerUrl(serverAddresses);
 
   saveWorkspacePreferences({
-    login: {
-      ...currentPreferences.login,
-      serverUrl: preferredServerUrl || currentPreferences.login.serverUrl,
-    },
     serverAddresses,
   });
 };
@@ -339,6 +366,25 @@ const parseAdminPreferences = (value: unknown): WorkspaceAdminPreferences => {
     activeTab: isAdminTab(value.activeTab)
       ? value.activeTab
       : DEFAULT_WORKSPACE_PREFERENCES.admin.activeTab,
+    duplicateFiles: parseDuplicateFilesPreferences(value.duplicateFiles),
+  };
+};
+
+const parseDuplicateFilesPreferences = (value: unknown): WorkspaceDuplicateFilesPreferences => {
+  if (!isRecord(value)) {
+    return DEFAULT_WORKSPACE_PREFERENCES.admin.duplicateFiles;
+  }
+
+  return {
+    autoSelectMode: isDuplicateFilesAutoSelectMode(value.autoSelectMode)
+      ? value.autoSelectMode
+      : DEFAULT_WORKSPACE_PREFERENCES.admin.duplicateFiles.autoSelectMode,
+    pageSize: isDuplicateFilesPageSize(value.pageSize)
+      ? value.pageSize
+      : DEFAULT_WORKSPACE_PREFERENCES.admin.duplicateFiles.pageSize,
+    showThumbnails: typeof value.showThumbnails === 'boolean'
+      ? value.showThumbnails
+      : DEFAULT_WORKSPACE_PREFERENCES.admin.duplicateFiles.showThumbnails,
   };
 };
 
@@ -458,6 +504,14 @@ const isFolderSortField = (value: unknown): value is FolderSortField => {
 
 const isSortDirection = (value: unknown): value is SortDirection => {
   return typeof value === 'string' && SORT_DIRECTIONS.includes(value as SortDirection);
+};
+
+const isDuplicateFilesAutoSelectMode = (value: unknown): value is WorkspaceDuplicateFilesAutoSelectMode => {
+  return typeof value === 'string' && DUPLICATE_FILES_AUTO_SELECT_MODES.includes(value as WorkspaceDuplicateFilesAutoSelectMode);
+};
+
+const isDuplicateFilesPageSize = (value: unknown): value is WorkspaceDuplicateFilesPageSize => {
+  return typeof value === 'number' && DUPLICATE_FILES_PAGE_SIZES.includes(value as WorkspaceDuplicateFilesPageSize);
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {

@@ -12,7 +12,6 @@ import type { LayoutChangeEvent } from 'react-native';
 
 import type {
   AdminActiveTaskOverview,
-  AdminDuplicateFileRecord,
   AdminFileDeleteLogPage,
   AdminGallery,
   AdminGalleryMutationPayload,
@@ -53,7 +52,7 @@ import {
   fetchAdminTasks,
   fetchAdminUsers,
   fetchAdminOfflineId,
-  findAdminDuplicateFiles,
+  fetchMediaAuthCode,
   getApiErrorMessage,
   pauseAdminTasks,
   resumeAdminTasks,
@@ -119,6 +118,7 @@ import {
   GalleryStatsModal,
   ScanSettingsModal,
 } from './admin/dialogs/MobileAdminDialogs';
+import { MobileDuplicateFilesSheet } from './admin/dialogs/MobileDuplicateFilesSheet';
 import { useAdminGalleryTaskPolling } from './admin/hooks/useAdminGalleryTaskPolling';
 import {
   CachePanel,
@@ -152,6 +152,7 @@ export const MobileAdminPage = ({
   });
   const cacheStatsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const loadRequestIdRef = useRef(0);
+  const mediaAuthRequestRef = useRef<Promise<string | undefined> | undefined>(undefined);
   const taskOverviewPollingInFlightRef = useRef(false);
   const tabLayoutsRef = useRef<Partial<Record<AdminTab, AdminTabLayout>>>({});
   const tabRailRef = useRef<ScrollView>(null);
@@ -166,7 +167,7 @@ export const MobileAdminPage = ({
   const [deletedFilesOpen, setDeletedFilesOpen] = useState(false);
   const [deletedLogOpen, setDeletedLogOpen] = useState(false);
   const [deletedLogPage, setDeletedLogPage] = useState<AdminFileDeleteLogPage>();
-  const [duplicateFiles, setDuplicateFiles] = useState<AdminDuplicateFileRecord[]>();
+  const [duplicateFilesOpen, setDuplicateFilesOpen] = useState(false);
   const [editorGallery, setEditorGallery] = useState<AdminGallery>();
   const [editorOpen, setEditorOpen] = useState(false);
   const [error, setError] = useState('');
@@ -210,6 +211,40 @@ export const MobileAdminPage = ({
   const activeTabLoaded = loadedTabs[activeTab] === true;
   const showInitialLoading = !adminPreferencesHydrated || (loading && !activeTabLoaded);
   const showRefreshLoading = adminPreferencesHydrated && loading && activeTabLoaded;
+
+  /**
+   * Ensures mobile admin media thumbnails can load through MT Photos auth_code.
+   */
+  const ensureMediaAuthCode = useCallback(async (): Promise<string | undefined> => {
+    const currentTokens = apiOptions.tokensRef.current;
+
+    if (currentTokens.authCode) {
+      return currentTokens.authCode;
+    }
+
+    if (mediaAuthRequestRef.current) {
+      return mediaAuthRequestRef.current;
+    }
+
+    mediaAuthRequestRef.current = fetchMediaAuthCode(session.serverUrl, currentTokens.refreshToken)
+      .then((authCode) => {
+        const nextTokens = { ...apiOptions.tokensRef.current, authCode };
+
+        apiOptions.tokensRef.current = nextTokens;
+        onChangeTokens(nextTokens);
+
+        return authCode;
+      })
+      .catch((authCodeError: unknown) => {
+        setMessage(getApiErrorMessage(authCodeError));
+        return undefined;
+      })
+      .finally(() => {
+        mediaAuthRequestRef.current = undefined;
+      });
+
+    return mediaAuthRequestRef.current;
+  }, [apiOptions.tokensRef, onChangeTokens, session.serverUrl]);
   const activeTabMeta = useMemo(
     () =>
       getAdminTabMeta(activeTab, {
@@ -600,7 +635,20 @@ export const MobileAdminPage = ({
   const handleOpenDeletedLogs = async (pageNo = 1): Promise<void> => {
     setDeletedLogOpen(true);
     await runAdminAction('deleted-logs', async () => {
-      setDeletedLogPage(await fetchAdminFileDeleteLogs(apiOptions, pageNo));
+      const [pageResult, usersResult] = await Promise.allSettled([
+        fetchAdminFileDeleteLogs(apiOptions, pageNo),
+        users.length > 0 ? Promise.resolve(users) : fetchAdminUsers(apiOptions),
+      ]);
+
+      if (usersResult.status === 'fulfilled') {
+        setUsers(usersResult.value);
+      }
+
+      if (pageResult.status === 'rejected') {
+        throw pageResult.reason;
+      }
+
+      setDeletedLogPage(pageResult.value);
       return undefined;
     });
   };
@@ -895,23 +943,20 @@ export const MobileAdminPage = ({
               <GalleryPanel
                 actionLoading={actionLoading}
                 activeTasks={galleryActiveTasks}
-                duplicateFiles={duplicateFiles}
                 galleries={galleries}
                 galleryStat={galleryStat}
                 onDeleteGallery={setDeleteTarget}
                 onOpenDeletedLogs={() => void handleOpenDeletedLogs()}
                 onOpenDeletedFiles={() => setDeletedFilesOpen(true)}
                 onOpenScanSettings={() => setScanSettingsOpen(true)}
-                onFindDuplicateFiles={() => runAdminAction('duplicate', async () => {
+                onFindDuplicateFiles={() => {
                   if (galleryIds.length === 0) {
-                    return '当前没有可检查的图库';
+                    setMessage('当前没有可检查的图库');
+                    return;
                   }
 
-                  const files = await findAdminDuplicateFiles(apiOptions, galleryIds);
-
-                  setDuplicateFiles(files);
-                  return files.length > 0 ? `发现 ${files.length} 个重复文件` : '没有发现重复文件';
-                })}
+                  setDuplicateFilesOpen(true);
+                }}
                 onOpenEditor={openEditor}
                 onOpenStats={() => setStatsOpen(true)}
                 onScanAll={() => runAdminAction('scan-all', async () => {
@@ -1020,6 +1065,7 @@ export const MobileAdminPage = ({
         actionLoading={actionLoading}
         open={deletedLogOpen}
         page={deletedLogPage}
+        users={users}
         onClearLogs={handleClearDeletedLogs}
         onClose={() => setDeletedLogOpen(false)}
         onExportDeletedFiles={() => runAdminAction('deleted', async () => {
@@ -1034,6 +1080,18 @@ export const MobileAdminPage = ({
           apiOptions={apiOptions}
           open={deletedFilesOpen}
           onClose={() => setDeletedFilesOpen(false)}
+          onMessage={setMessage}
+        />
+      ) : null}
+
+      {duplicateFilesOpen ? (
+        <MobileDuplicateFilesSheet
+          apiOptions={apiOptions}
+          authCode={session.tokens.authCode}
+          galleries={galleries}
+          open={duplicateFilesOpen}
+          onClose={() => setDuplicateFilesOpen(false)}
+          onEnsureAuthCode={ensureMediaAuthCode}
           onMessage={setMessage}
         />
       ) : null}

@@ -19,8 +19,10 @@ interface MobileImageViewProps {
   onImageIndexChange?: (imageIndex: number) => void;
   onLongPress?: (image: ImageViewSource) => void;
   onRequestClose: () => void;
+  onSwipeStart?: () => void;
   OverlayComponent?: ComponentType<{ imageIndex: number }>;
   presentationStyle?: ModalProps['presentationStyle'];
+  shouldRenderImageItem?: (imageIndex: number) => boolean;
   swipeToCloseEnabled?: boolean;
   visible: boolean;
 }
@@ -38,9 +40,11 @@ const MobileImageView = ({
   ItemOverlayComponent,
   onRequestClose,
   OverlayComponent,
+  shouldRenderImageItem,
   visible,
 }: MobileImageViewProps) => {
   const currentImage = images[imageIndex];
+  const renderImageItem = shouldRenderImageItem?.(imageIndex) ?? true;
 
   if (!visible) {
     return null;
@@ -55,16 +59,18 @@ const MobileImageView = ({
     >
       {HeaderComponent ? <HeaderComponent imageIndex={imageIndex} /> : null}
       <Pressable onPress={onRequestClose} style={styles.imageFrame}>
-        {currentImage ? <Image resizeMode="contain" source={currentImage} style={styles.image} /> : null}
+        {currentImage && renderImageItem ? (
+          <Image resizeMode="contain" source={currentImage} style={styles.image} />
+        ) : null}
       </Pressable>
-      {ItemOverlayComponent ? (
-        <View pointerEvents="box-none" style={styles.overlay}>
-          <ItemOverlayComponent imageIndex={imageIndex} />
-        </View>
-      ) : null}
       {OverlayComponent ? (
         <View pointerEvents="box-none" style={styles.overlay}>
           <OverlayComponent imageIndex={imageIndex} />
+        </View>
+      ) : null}
+      {ItemOverlayComponent ? (
+        <View pointerEvents="box-none" style={styles.overlay}>
+          <ItemOverlayComponent imageIndex={imageIndex} />
         </View>
       ) : null}
       {FooterComponent ? <FooterComponent imageIndex={imageIndex} /> : null}

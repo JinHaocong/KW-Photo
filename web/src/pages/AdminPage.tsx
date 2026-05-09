@@ -67,6 +67,7 @@ export const AdminPage = ({ onShowToast, uploadTasks }: AdminPageProps) => {
     initialAdminPreferences.activeTab,
   );
   const apiInfo = useSessionStore((state) => state.apiInfo);
+  const ensureAuthCode = useSessionStore((state) => state.ensureAuthCode);
   const refresh = useSessionStore((state) => state.refresh);
   const serverUrl = useSessionStore((state) => state.serverUrl);
   const tokens = useSessionStore((state) => state.tokens);
@@ -123,7 +124,9 @@ export const AdminPage = ({ onShowToast, uploadTasks }: AdminPageProps) => {
           {activeTab === "gallery" ? (
             <AdminGalleryPanel
               apiOptions={apiOptions}
+              authCode={tokens?.authCode}
               currentUser={user}
+              onEnsureAuthCode={ensureAuthCode}
               onShowToast={onShowToast}
             />
           ) : null}

@@ -18,7 +18,9 @@ interface MobileImageViewProps {
   onImageIndexChange?: (imageIndex: number) => void;
   onLongPress?: (image: WebImageSource) => void;
   onRequestClose: () => void;
+  onSwipeStart?: () => void;
   presentationStyle?: ModalProps['presentationStyle'];
+  shouldRenderImageItem?: (imageIndex: number) => boolean;
   swipeToCloseEnabled?: boolean;
   visible: boolean;
 }
@@ -34,9 +36,11 @@ const MobileImageView = ({
   imageIndex,
   images,
   onRequestClose,
+  shouldRenderImageItem,
   visible,
 }: MobileImageViewProps) => {
   const currentImage = images[imageIndex];
+  const renderImageItem = shouldRenderImageItem?.(imageIndex) ?? true;
 
   if (!visible) {
     return null;
@@ -51,7 +55,7 @@ const MobileImageView = ({
     >
       {HeaderComponent ? <HeaderComponent imageIndex={imageIndex} /> : null}
       <Pressable onPress={onRequestClose} style={styles.imageFrame}>
-        {currentImage ? (
+        {currentImage && renderImageItem ? (
           <Image resizeMode="contain" source={currentImage} style={styles.image} />
         ) : null}
       </Pressable>

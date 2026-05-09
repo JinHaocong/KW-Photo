@@ -37,6 +37,7 @@ import {
   fetchAdminGalleryScanSettings,
   fetchAdminGalleryStatsOverview,
   fetchAdminGallerySubDirs,
+  formatAdminUserName,
   getApiErrorMessage,
   updateAdminGalleryAutoScanSkipIds,
   updateAdminGalleryScanSettings,
@@ -1297,10 +1298,12 @@ export const DeletedLogModal = ({
   onLoadPage,
   open,
   page,
+  users,
 }: {
   actionLoading: string;
   open: boolean;
   page?: AdminFileDeleteLogPage;
+  users: AdminUserRecord[];
   onClearLogs: () => Promise<void>;
   onClose: () => void;
   onExportDeletedFiles: () => Promise<void>;
@@ -1334,7 +1337,9 @@ export const DeletedLogModal = ({
               <View key={log.id} style={styles.card}>
                 <View style={styles.cardHeader}>
                   <View style={styles.cardTitleWrap}>
-                    <Text numberOfLines={1} style={styles.cardTitle}>{log.operator}</Text>
+                    <Text numberOfLines={1} style={styles.cardTitle}>
+                      {formatAdminUserName(users, log.operatorId, log.operator)}
+                    </Text>
                     <Text numberOfLines={1} style={styles.cardMeta}>{formatAdminDateTime(log.deleteTime)} · {log.deleteType}</Text>
                   </View>
                   <Ionicons color={MOBILE_SAGE_SLATE.muted} name="trash-outline" size={17} />

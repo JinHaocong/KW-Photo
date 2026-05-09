@@ -4,7 +4,6 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View 
 
 import type {
   AdminActiveTaskOverview,
-  AdminDuplicateFileRecord,
   AdminGallery,
   AdminGalleryStat,
   AdminInfoItem,
@@ -112,7 +111,6 @@ export const OverviewPanel = ({
 export const GalleryPanel = ({
   actionLoading,
   activeTasks,
-  duplicateFiles,
   galleries,
   galleryStat,
   onDeleteGallery,
@@ -128,7 +126,6 @@ export const GalleryPanel = ({
 }: {
   actionLoading: string;
   activeTasks: AdminTask[];
-  duplicateFiles?: AdminDuplicateFileRecord[];
   galleries: AdminGallery[];
   galleryStat?: AdminGalleryStat;
   onDeleteGallery: (gallery: AdminGallery) => void;
@@ -213,18 +210,6 @@ export const GalleryPanel = ({
           <Text style={styles.summaryPill}>照片：{galleryStat.photo}</Text>
           <Text style={styles.summaryPill}>视频：{galleryStat.video}</Text>
           <Text style={styles.summaryPill}>总大小：{formatFileSize(galleryStat.totalSize)}</Text>
-        </View>
-      ) : null}
-
-      {duplicateFiles ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>重复文件检查结果</Text>
-          {duplicateFiles.length === 0 ? <EmptyLine text="没有发现重复文件" /> : null}
-          {duplicateFiles.slice(0, 6).map((file) => (
-            <Text key={`${file.id}-${file.md5}`} numberOfLines={2} style={styles.cardMeta}>
-              {file.fileName} · {formatFileSize(file.size)} · 图库 {file.galleryIds.join(',') || '-'}
-            </Text>
-          ))}
         </View>
       ) : null}
 
