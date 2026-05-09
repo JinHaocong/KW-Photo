@@ -21,6 +21,7 @@ import {
 
 import type { ApiInfo, AuthTokens } from '@kwphoto/core';
 import {
+  ApiRequestError,
   fetchApiInfo,
   fetchCurrentUser,
   getApiErrorMessage,
@@ -56,6 +57,7 @@ const BOOT_OVERLAY_FADE_DURATION_MS = 260;
 const BOOT_OVERLAY_VISIBLE_OPACITY = 0.98;
 const PRIVACY_OVERLAY_FADE_DURATION_MS = 220;
 const PRIVACY_OVERLAY_VISIBLE_OPACITY = 0.98;
+const MOBILE_SESSION_RESTORE_TIMEOUT_MS = 2000;
 
 type StartupPhase = 'reading' | 'validating' | 'ready';
 
@@ -272,10 +274,13 @@ export default function App() {
       await writeMobileSession(nextSession);
       await mergeMobilePreferences({ serverUrl: nextSession.serverUrl });
     } catch (error) {
-      await clearMobileSession();
-      setApiInfo(undefined);
-      setSession(undefined);
-      setServerUrl(getInitialMobileServerUrl(preferences, session.serverUrl));
+      if (isSessionInvalidError(error)) {
+        await clearMobileSession();
+        setApiInfo(undefined);
+        setSession(undefined);
+        setServerUrl(getInitialMobileServerUrl(preferences, session.serverUrl));
+      }
+
       setMessage(getApiErrorMessage(error));
     } finally {
       foregroundValidationRef.current = false;
@@ -659,7 +664,11 @@ const hydrateAuthenticatedMobileSession = async (
 
   for (const candidate of getMobileRuntimeServerCandidates(preferences, storedSession.serverUrl)) {
     try {
-      return await createMobileSessionForServer(storedSession, candidate, { refreshFirst: true });
+      return await withTimeout(
+        createMobileSessionForServer(storedSession, candidate, { refreshFirst: true }),
+        MOBILE_SESSION_RESTORE_TIMEOUT_MS,
+        '服务器探活超时，请稍后重试',
+      );
     } catch (error) {
       lastError = error;
     }
@@ -726,6 +735,37 @@ const normalizeServerUrl = (value: string): string => {
   }
 
   return `https://${trimmed.replace(/\/+$/, '')}`;
+};
+
+/**
+ * Keeps mobile session recovery from blocking the foreground overlay on one slow server candidate.
+ */
+const withTimeout = async <TValue,>(
+  promise: Promise<TValue>,
+  timeoutMs: number,
+  messageText: string,
+): Promise<TValue> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(messageText)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
+/**
+ * Distinguishes expired credentials from temporary foreground network failures.
+ */
+const isSessionInvalidError = (error: unknown): boolean => {
+  return error instanceof ApiRequestError && error.statusCode === 401;
 };
 
 const styles = StyleSheet.create({

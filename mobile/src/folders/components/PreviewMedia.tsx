@@ -1,8 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
-import type { ImageStyle, StyleProp } from "react-native";
+import type { VideoPlayer } from "expo-video";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, AppState, Image, Pressable, ScrollView, Text, View } from "react-native";
+import type { AppStateStatus, ImageStyle, StyleProp } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { FileAlbumSummary } from "@kwphoto/core";
@@ -17,6 +18,8 @@ import { useCachedMobileMediaUri } from "../../useCachedMobileMediaUri";
 import { styles } from "../folderStyles";
 
 export type PreviewVideoSourceLabel = "接口" | "缓存";
+
+const MIN_RESTORABLE_VIDEO_TIME = 0.35;
 
 interface ProgressiveImagePreviewProps {
   hdReady: boolean;
@@ -108,10 +111,12 @@ export const PreviewThumbnailWarmup = ({ sources }: { sources: string[] }) => {
  */
 export const InlineVideoPreview = ({
   onFirstFrame,
+  playbackKey,
   posterUri,
   sourceUri,
 }: {
   onFirstFrame: () => void;
+  playbackKey?: string;
   posterUri?: string;
   sourceUri?: string;
 }) => {
@@ -120,6 +125,14 @@ export const InlineVideoPreview = ({
     createdPlayer.allowsExternalPlayback = false;
     createdPlayer.loop = false;
   });
+  const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
+    useVideoPlaybackResume({
+      active: Boolean(sourceUri),
+      loaded: Boolean(sourceUri),
+      playbackKey,
+      player,
+      sourceUri,
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -138,6 +151,7 @@ export const InlineVideoPreview = ({
       safelyPausePlayer();
       return () => {
         cancelled = true;
+        capturePlaybackSnapshot({ pause: true });
         safelyPausePlayer();
       };
     }
@@ -146,6 +160,8 @@ export const InlineVideoPreview = ({
       .replaceAsync(sourceUri)
       .then(() => {
         if (!cancelled) {
+          restorePlaybackSnapshot({ requireLoaded: false });
+
           try {
             player.pause();
           } catch {
@@ -157,9 +173,10 @@ export const InlineVideoPreview = ({
 
     return () => {
       cancelled = true;
+      capturePlaybackSnapshot({ pause: true });
       safelyPausePlayer();
     };
-  }, [player, sourceUri]);
+  }, [capturePlaybackSnapshot, player, restorePlaybackSnapshot, sourceUri]);
 
   if (!sourceUri) {
     return (
@@ -203,6 +220,7 @@ export const NativeVideoControlsOverlay = ({
   onClose,
   onLoadComplete,
   onLoadError,
+  playbackKey,
   posterUri,
   sourceLabel,
   sourceUri,
@@ -211,6 +229,7 @@ export const NativeVideoControlsOverlay = ({
   onClose: () => void;
   onLoadComplete?: () => void;
   onLoadError?: (messageText: string) => void;
+  playbackKey?: string;
   posterUri?: string;
   sourceLabel?: PreviewVideoSourceLabel;
   sourceUri?: string;
@@ -227,6 +246,14 @@ export const NativeVideoControlsOverlay = ({
     createdPlayer.allowsExternalPlayback = false;
     createdPlayer.loop = false;
   });
+  const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
+    useVideoPlaybackResume({
+      active: Boolean(sourceUri),
+      loaded: Boolean(sourceUri && nativeLoadedSourceUri === sourceUri),
+      playbackKey,
+      player: nativePlayer,
+      sourceUri,
+    });
 
   useEffect(() => {
     onLoadCompleteRef.current = onLoadComplete;
@@ -237,6 +264,7 @@ export const NativeVideoControlsOverlay = ({
     let cancelled = false;
 
     if (!sourceUri) {
+      capturePlaybackSnapshot({ pause: true });
       setNativeFirstFrameRendered(false);
       setNativeLoadedSourceUri(undefined);
       setNativeLoadError("");
@@ -257,6 +285,7 @@ export const NativeVideoControlsOverlay = ({
       .then(() => {
         if (!cancelled) {
           setNativeLoadedSourceUri(sourceUri);
+          restorePlaybackSnapshot({ requireLoaded: false });
           onLoadCompleteRef.current?.();
         }
       })
@@ -271,6 +300,7 @@ export const NativeVideoControlsOverlay = ({
 
     return () => {
       cancelled = true;
+      capturePlaybackSnapshot({ pause: true });
 
       try {
         nativePlayer.pause();
@@ -278,7 +308,7 @@ export const NativeVideoControlsOverlay = ({
         // Native player may already be detached while the modal is closing.
       }
     };
-  }, [nativePlayer, sourceUri]);
+  }, [capturePlaybackSnapshot, nativePlayer, restorePlaybackSnapshot, sourceUri]);
 
   useEffect(() => {
     if (!visible || !sourceUri || nativeLoadedSourceUri !== sourceUri) {
@@ -291,11 +321,15 @@ export const NativeVideoControlsOverlay = ({
     }
 
     try {
-      nativePlayer.play();
+      const restored = restorePlaybackSnapshot({ resume: true });
+
+      if (!restored) {
+        nativePlayer.play();
+      }
     } catch {
       // Playback can fail if the source was replaced while the overlay was opening.
     }
-  }, [nativeLoadedSourceUri, nativePlayer, sourceUri, visible]);
+  }, [nativeLoadedSourceUri, nativePlayer, restorePlaybackSnapshot, sourceUri, visible]);
 
   if (!visible) {
     return null;
@@ -361,6 +395,166 @@ export const NativeVideoControlsOverlay = ({
       </Pressable>
     </View>
   );
+};
+
+interface VideoPlaybackResumeOptions {
+  active: boolean;
+  loaded: boolean;
+  playbackKey?: string;
+  player: VideoPlayer;
+  sourceUri?: string;
+}
+
+interface VideoPlaybackSnapshot {
+  playbackKey: string;
+  position: number;
+  shouldResume: boolean;
+}
+
+/**
+ * Preserves native video progress across app backgrounding and same-video source reloads.
+ */
+const useVideoPlaybackResume = ({
+  active,
+  loaded,
+  playbackKey,
+  player,
+  sourceUri,
+}: VideoPlaybackResumeOptions): {
+  capturePlaybackSnapshot: (options?: { pause?: boolean }) => void;
+  restorePlaybackSnapshot: (options?: { requireLoaded?: boolean; resume?: boolean }) => boolean;
+} => {
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const snapshotRef = useRef<VideoPlaybackSnapshot | undefined>(undefined);
+  const activePlaybackKey = playbackKey ?? sourceUri;
+
+  const capturePlaybackSnapshot = useCallback((options: { pause?: boolean } = {}): void => {
+    if (!active || !activePlaybackKey || !sourceUri) {
+      return;
+    }
+
+    const previousSnapshot = snapshotRef.current;
+
+    if (appStateRef.current !== "active" && previousSnapshot?.playbackKey === activePlaybackKey) {
+      if (options.pause) {
+        pauseVideoPlayer(player);
+      }
+
+      return;
+    }
+
+    const currentPosition = getVideoPlayerCurrentTime(player);
+    const position = currentPosition > 0
+      ? currentPosition
+      : previousSnapshot?.playbackKey === activePlaybackKey
+        ? previousSnapshot.position
+        : 0;
+
+    snapshotRef.current = {
+      playbackKey: activePlaybackKey,
+      position,
+      shouldResume: isVideoPlayerPlaying(player),
+    };
+
+    if (options.pause) {
+      pauseVideoPlayer(player);
+    }
+  }, [active, activePlaybackKey, player, sourceUri]);
+
+  const restorePlaybackSnapshot = useCallback((options: { requireLoaded?: boolean; resume?: boolean } = {}): boolean => {
+    const requireLoaded = options.requireLoaded ?? true;
+
+    if ((requireLoaded && !loaded) || !activePlaybackKey || !sourceUri) {
+      return false;
+    }
+
+    const snapshot = snapshotRef.current;
+
+    if (!snapshot || snapshot.playbackKey !== activePlaybackKey) {
+      return false;
+    }
+
+    if (snapshot.position > MIN_RESTORABLE_VIDEO_TIME) {
+      seekVideoPlayer(player, snapshot.position);
+    }
+
+    if (options.resume && snapshot.shouldResume) {
+      playVideoPlayer(player);
+    }
+
+    return true;
+  }, [activePlaybackKey, loaded, player, sourceUri]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const previousAppState = appStateRef.current;
+      const returningToForeground =
+        /inactive|background/.test(previousAppState) && nextAppState === "active";
+
+      if (nextAppState !== "active") {
+        capturePlaybackSnapshot({ pause: true });
+      }
+
+      appStateRef.current = nextAppState;
+
+      if (returningToForeground) {
+        restorePlaybackSnapshot({ resume: true });
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [capturePlaybackSnapshot, restorePlaybackSnapshot]);
+
+  return {
+    capturePlaybackSnapshot,
+    restorePlaybackSnapshot,
+  };
+};
+
+const getVideoPlayerCurrentTime = (player: VideoPlayer): number => {
+  try {
+    return normalizeVideoTime(player.currentTime);
+  } catch {
+    return 0;
+  }
+};
+
+const isVideoPlayerPlaying = (player: VideoPlayer): boolean => {
+  try {
+    return player.playing;
+  } catch {
+    return false;
+  }
+};
+
+const pauseVideoPlayer = (player: VideoPlayer): void => {
+  try {
+    player.pause();
+  } catch {
+    // Native player may be detached while the app is transitioning between states.
+  }
+};
+
+const playVideoPlayer = (player: VideoPlayer): void => {
+  try {
+    player.play();
+  } catch {
+    // Native player may still be reconnecting after the app returns to foreground.
+  }
+};
+
+const seekVideoPlayer = (player: VideoPlayer, position: number): void => {
+  try {
+    player.currentTime = position;
+  } catch {
+    // Some native sources reject seeks until they have finished reloading.
+  }
+};
+
+const normalizeVideoTime = (time: number): number => {
+  return Number.isFinite(time) && time > 0 ? time : 0;
 };
 
 /**

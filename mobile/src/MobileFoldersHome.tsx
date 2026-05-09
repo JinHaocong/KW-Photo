@@ -497,6 +497,8 @@ const MobileFolderDirectoryScreen = ({
     useState<string>();
   const [nativePreviewVideoRequestKey, setNativePreviewVideoRequestKey] =
     useState<string>();
+  const [nativePreviewVideoPlaybackKey, setNativePreviewVideoPlaybackKey] =
+    useState<string>();
   const [nativePreviewVideoSourceLabel, setNativePreviewVideoSourceLabel] =
     useState<PreviewVideoSourceLabel>();
   const [nativePreviewVideoSourceUri, setNativePreviewVideoSourceUri] =
@@ -1762,6 +1764,7 @@ const MobileFolderDirectoryScreen = ({
     setVideoPreparing(false);
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
+    setNativePreviewVideoPlaybackKey(undefined);
     setNativePreviewVideoPosterUri(undefined);
     setNativePreviewVideoRequestKey(undefined);
     setNativePreviewVideoSourceLabel(undefined);
@@ -1804,6 +1807,7 @@ const MobileFolderDirectoryScreen = ({
     setVideoPreparing(false);
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
+    setNativePreviewVideoPlaybackKey(undefined);
     setNativePreviewVideoPosterUri(undefined);
     setNativePreviewVideoRequestKey(undefined);
     setNativePreviewVideoSourceLabel(undefined);
@@ -2298,6 +2302,7 @@ const MobileFolderDirectoryScreen = ({
     setVideoPreparing(false);
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
+    setNativePreviewVideoPlaybackKey(undefined);
     setNativePreviewVideoPosterUri(undefined);
     setNativePreviewVideoRequestKey(undefined);
     setNativePreviewVideoSourceLabel(undefined);
@@ -2336,6 +2341,7 @@ const MobileFolderDirectoryScreen = ({
     setVideoPreparing(false);
     nativePreviewVideoLoadRequestRef.current += 1;
     setNativePreviewVideoOpen(false);
+    setNativePreviewVideoPlaybackKey(undefined);
     setNativePreviewVideoPosterUri(undefined);
     setNativePreviewVideoRequestKey(undefined);
     setNativePreviewVideoSourceLabel(undefined);
@@ -3152,11 +3158,13 @@ const MobileFolderDirectoryScreen = ({
     nativePreviewVideoLoadRequestRef.current = requestId;
     setNativePreviewVideoOpen(false);
     setNativePreviewVideoPosterUri(getVideoPosterUriForFile(file));
+    setNativePreviewVideoPlaybackKey(fileKey);
     setNativePreviewVideoRequestKey(fileKey);
     setNativePreviewVideoSourceLabel(undefined);
     setNativePreviewVideoSourceUri(undefined);
 
     if (!remoteSourceUri) {
+      setNativePreviewVideoPlaybackKey(undefined);
       setNativePreviewVideoRequestKey(undefined);
       showPreviewNotice("当前视频没有可用播放地址");
       return;
@@ -3362,6 +3370,7 @@ const MobileFolderDirectoryScreen = ({
       onClose={() => {
         nativePreviewVideoLoadRequestRef.current += 1;
         setNativePreviewVideoOpen(false);
+        setNativePreviewVideoPlaybackKey(undefined);
         setNativePreviewVideoPosterUri(undefined);
         setNativePreviewVideoRequestKey(undefined);
         setNativePreviewVideoSourceLabel(undefined);
@@ -3373,12 +3382,14 @@ const MobileFolderDirectoryScreen = ({
       }}
       onLoadError={(messageText) => {
         setNativePreviewVideoOpen(false);
+        setNativePreviewVideoPlaybackKey(undefined);
         setNativePreviewVideoPosterUri(undefined);
         setNativePreviewVideoRequestKey(undefined);
         setNativePreviewVideoSourceLabel(undefined);
         setNativePreviewVideoSourceUri(undefined);
         showPreviewNotice(messageText);
       }}
+      playbackKey={nativePreviewVideoPlaybackKey}
       posterUri={nativePreviewVideoPosterUri}
       sourceLabel={nativePreviewVideoSourceLabel}
       sourceUri={nativePreviewVideoSourceUri}
@@ -3545,6 +3556,7 @@ const MobileFolderDirectoryScreen = ({
             previewMode === "original" ? (
               <InlineVideoPreview
                 onFirstFrame={previewVideoCache.rememberLoadedResource}
+                playbackKey={previewFileKey}
                 posterUri={previewVideoCoverUri}
                 sourceUri={previewVideoCache.displayUri}
               />

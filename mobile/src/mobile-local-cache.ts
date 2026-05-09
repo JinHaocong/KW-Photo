@@ -92,6 +92,7 @@ interface CachePayloadSize {
 }
 
 interface MobileCachePayloadSnapshot {
+  referencedFileSizeByUri: Map<string, number>;
   referencedDataKeys: Set<string>;
   referencedFileUris: Set<string>;
   staleRecordKeys: Set<string>;
@@ -351,15 +352,17 @@ export const readMobileCacheStats = async (scope?: string): Promise<MobileCacheS
  * @returns Folder-level cache summaries.
  */
 export const listMobileCacheFolders = async (scope?: string): Promise<MobileCacheFolderSummary[]> => {
-  const records = (await readCacheRecordMetas()).filter((record) => !scope || record.scope === scope);
+  const payloadSnapshot = await inspectMobileCachePayloads(await readCacheRecordMetas());
+  const records = payloadSnapshot.usefulRecords.filter((record) => !scope || record.scope === scope);
   const folderMap = new Map<string, MobileCacheFolderSummary>();
 
   records.forEach((record) => {
+    const payloadSize = payloadSnapshot.usefulSizeByKey.get(record.key) ?? record.size;
     const summary = folderMap.get(record.folderScopeKey) ?? createEmptyCacheFolderSummary(record);
 
     summary.itemCount += 1;
     summary.latestCachedAt = Math.max(summary.latestCachedAt ?? 0, record.updatedAt);
-    summary.size += record.size;
+    summary.size += payloadSize;
 
     if (record.kind === 'directory') {
       summary.directoryCount += 1;
@@ -607,7 +610,9 @@ const inspectMobileCachePayloads = async (
   records: MobileLocalCacheRecordMeta[],
 ): Promise<MobileCachePayloadSnapshot> => {
   const referencedDataKeys = new Set<string>();
+  const referencedFileSizeByUri = new Map<string, number>();
   const referencedFileUris = new Set<string>();
+  let staleRecordMetaSize = 0;
   const staleRecordKeys = new Set<string>();
   const usefulRecords: MobileLocalCacheRecordMeta[] = [];
   const usefulSizeByKey = new Map<string, number>();
@@ -626,24 +631,30 @@ const inspectMobileCachePayloads = async (
     if (payloadSize.exists) {
       usefulRecords.push(record);
       usefulSizeByKey.set(record.key, payloadSize.size);
+
+      if (record.fileUri) {
+        referencedFileSizeByUri.set(record.fileUri, payloadSize.size);
+      }
     } else {
       staleRecordKeys.add(record.key);
+      staleRecordMetaSize += estimateSerializedSize(record);
     }
   }
 
   const [unusedDataStats, unusedFileStats] = await Promise.all([
     readUnusedMobileCacheDataStats(referencedDataKeys),
-    readUnusedMobileCacheFileStats(referencedFileUris),
+    readUnusedMobileCacheFileStats(referencedFileUris, referencedFileSizeByUri),
   ]);
 
   return {
+    referencedFileSizeByUri,
     referencedDataKeys,
     referencedFileUris,
     staleRecordKeys,
     usefulRecords,
     usefulSizeByKey,
     unusedCount: staleRecordKeys.size + unusedDataStats.count + unusedFileStats.count,
-    unusedSize: unusedDataStats.size + unusedFileStats.size,
+    unusedSize: staleRecordMetaSize + unusedDataStats.size + unusedFileStats.size,
   };
 };
 
@@ -663,7 +674,7 @@ const readCacheRecordPayloadSize = async (record: MobileLocalCacheRecordMeta): P
 
       return {
         exists: file.exists,
-        size: file.exists ? getFileSize(file) : 0,
+        size: file.exists ? getFileSize(file, record.size) : 0,
       };
     } catch {
       return { exists: false, size: 0 };
@@ -816,19 +827,22 @@ const readAsyncStorageKeysStats = async (keys: string[]): Promise<{ count: numbe
   );
 };
 
+/**
+ * Reads physical orphaned media bytes, using the cache directory size as a fallback when file sizes are unavailable.
+ */
 const readUnusedMobileCacheFileStats = (
   referencedFileUris: Set<string>,
+  referencedFileSizeByUri: Map<string, number>,
 ): { count: number; size: number } => {
-  return listMobileCacheFiles()
-    .filter((file) => !referencedFileUris.has(file.uri))
-    .reduce(
-      (summary, file) => {
-        summary.count += 1;
-        summary.size += getFileSize(file);
-        return summary;
-      },
-      { count: 0, size: 0 },
-    );
+  const unusedFiles = listMobileCacheFiles().filter((file) => !referencedFileUris.has(file.uri));
+  const listedUnusedSize = unusedFiles.reduce((size, file) => size + getFileSize(file), 0);
+  const referencedFileSize = sumNumbers(Array.from(referencedFileSizeByUri.values()));
+  const physicalUnusedSize = Math.max(0, getMobileCacheDirectorySize() - referencedFileSize);
+
+  return {
+    count: unusedFiles.length,
+    size: Math.max(listedUnusedSize, physicalUnusedSize),
+  };
 };
 
 const deleteUnusedMobileCacheFiles = (referencedFileUris: Set<string>): void => {
@@ -865,6 +879,50 @@ const listDirectoryFiles = (directory: Directory): File[] => {
   } catch {
     return [];
   }
+};
+
+/**
+ * Estimates bytes occupied by stale index metadata so clearing invalid records is reflected in residual stats.
+ */
+const estimateSerializedSize = (value: unknown): number => {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 0;
+  }
+};
+
+/**
+ * Reads the full media cache directory size, which is more reliable than per-file size on some native builds.
+ */
+const getMobileCacheDirectorySize = (): number => {
+  try {
+    const directory = new Directory(Paths.cache, MOBILE_CACHE_DIRECTORY_NAME);
+
+    if (!directory.exists) {
+      return 0;
+    }
+
+    return getDirectorySize(directory);
+  } catch {
+    return 0;
+  }
+};
+
+const getDirectorySize = (directory: { info?: () => { size?: number | null }; size?: number | null }): number => {
+  try {
+    return normalizeCacheSize(directory.info?.().size ?? directory.size);
+  } catch {
+    try {
+      return normalizeCacheSize(directory.size);
+    } catch {
+      return 0;
+    }
+  }
+};
+
+const sumNumbers = (values: number[]): number => {
+  return values.reduce((sum, value) => sum + value, 0);
 };
 
 const uniqueStrings = (values: string[]): string[] => {
@@ -917,12 +975,23 @@ const deleteFileUri = (uri?: string): void => {
   }
 };
 
-const getFileSize = (file: { info?: () => { size?: number | null }; size?: number }): number => {
+const getFileSize = (
+  file: { info?: () => { size?: number | null }; size?: number },
+  fallbackSize = 0,
+): number => {
   try {
-    return file.info?.().size ?? file.size ?? 0;
+    return normalizeCacheSize(file.info?.().size ?? file.size, fallbackSize);
   } catch {
-    return file.size ?? 0;
+    try {
+      return normalizeCacheSize(file.size, fallbackSize);
+    } catch {
+      return fallbackSize;
+    }
   }
+};
+
+const normalizeCacheSize = (size?: number | null, fallbackSize = 0): number => {
+  return typeof size === 'number' && Number.isFinite(size) && size > 0 ? size : fallbackSize;
 };
 
 const createDirectoryCacheKey = (scope: string, folderId?: number): string => {
