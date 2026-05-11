@@ -35,6 +35,14 @@
         "zip"
       ]
     },
+    "dmg": {
+      "backgroundColor": "#f5f5f4",
+      "icon": null,
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
     "win": {
       "icon": "assets/icons/icon.ico",
       "target": [
