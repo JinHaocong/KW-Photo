@@ -13,6 +13,7 @@ import type {
 } from '../../services/admin-service';
 import type { ApiClientOptions } from '../../services/api-client';
 import { getApiErrorMessage } from '../../services/api-client';
+import { fetchMediaResourceBlob } from '../../shared/local-cache';
 import { createBrowserMediaUrl, createThumbnailUrl } from '../../shared/media-url';
 import type { WorkspaceDuplicateFilesPreferences } from '../../shared/workspace-preferences';
 import { readAdminPreferences, writeAdminPreferences } from '../../shared/workspace-preferences';
@@ -601,7 +602,7 @@ export const AdminDuplicateFilesDialog = ({
 
                 const groupSelectedCount = countSelectedFilesInGroup(group, selectedKeys);
                 const groupSelected = groupSelectedCount > 0;
-                const thumbnailUrl = createDuplicateFileThumbnailUrl({
+                const thumbnailSourceUrl = createDuplicateFileThumbnailSourceUrl({
                   authCode: resolvedAuthCode,
                   baseUrl: apiOptions.baseUrl,
                   file: group.files[0],
@@ -619,10 +620,11 @@ export const AdminDuplicateFilesDialog = ({
                     <article className={`admin-duplicate-files-group-card${showThumbnails ? '' : ' is-thumbnail-hidden'}${groupSelected ? ' is-selected-group' : ''}`}>
                       <aside className="admin-duplicate-files-group-card__summary">
                         {showThumbnails ? (
-                          <span className="admin-duplicate-files-preview" title={`MD5:${group.md5}`}>
-                            {thumbnailUrl ? <img alt="" src={thumbnailUrl} /> : <ImageIcon size={24} />}
-                            <em>{group.files.length}</em>
-                          </span>
+                          <DuplicateFilePreview
+                            fileCount={group.files.length}
+                            md5={group.md5}
+                            sourceUrl={thumbnailSourceUrl}
+                          />
                         ) : (
                           <span className="admin-duplicate-files-group-marker" title={`MD5:${group.md5}`}>
                             <strong>{group.files.length}</strong>
@@ -1070,9 +1072,72 @@ const formatDuplicateFileMeta = (file: AdminDuplicateFileRecord, index: number):
 };
 
 /**
- * Builds the first-file thumbnail used as the visual group marker.
+ * Renders a duplicate group thumbnail in Web and desktop runtimes.
+ * Desktop cannot use createBrowserMediaUrl directly, so it falls back to a temporary Blob URL.
  */
-const createDuplicateFileThumbnailUrl = ({
+const DuplicateFilePreview = ({
+  fileCount,
+  md5,
+  sourceUrl,
+}: {
+  fileCount: number;
+  md5: string;
+  sourceUrl?: string;
+}) => {
+  const thumbnailUrl = useDuplicateThumbnailUrl(sourceUrl);
+
+  return (
+    <span className="admin-duplicate-files-preview" title={`MD5:${md5}`}>
+      {thumbnailUrl ? <img alt="" src={thumbnailUrl} /> : <ImageIcon size={24} />}
+      <em>{fileCount}</em>
+    </span>
+  );
+};
+
+/**
+ * Resolves a loadable thumbnail URL without requiring a cache folder context.
+ */
+const useDuplicateThumbnailUrl = (sourceUrl?: string): string | undefined => {
+  const [blobUrl, setBlobUrl] = useState<string>();
+  const browserUrl = useMemo(() => createBrowserMediaUrl(sourceUrl), [sourceUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | undefined;
+
+    setBlobUrl(undefined);
+
+    if (browserUrl || !sourceUrl) {
+      return undefined;
+    }
+
+    void fetchMediaResourceBlob(sourceUrl)
+      .then((blob) => {
+        if (!blob || cancelled) {
+          return;
+        }
+
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [browserUrl, sourceUrl]);
+
+  return browserUrl || blobUrl;
+};
+
+/**
+ * Builds the first-file thumbnail source URL used as the visual group marker.
+ */
+const createDuplicateFileThumbnailSourceUrl = ({
   authCode,
   baseUrl,
   file,
@@ -1081,12 +1146,12 @@ const createDuplicateFileThumbnailUrl = ({
   baseUrl: string;
   file: AdminDuplicateFileRecord;
 }): string | undefined => {
-  return createBrowserMediaUrl(createThumbnailUrl({
+  return createThumbnailUrl({
     authCode,
     baseUrl,
     md5: file.md5,
     type: 'h220',
-  }));
+  });
 };
 
 const formatBytes = (size: number): string => {
