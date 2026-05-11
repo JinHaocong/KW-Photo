@@ -1114,8 +1114,8 @@ export const styles = StyleSheet.create({
   },
   nativeVideoCloseButton: {
     alignItems: "center",
-    backgroundColor: "rgba(15, 23, 42, 0.72)",
-    borderColor: "rgba(255, 255, 255, 0.22)",
+    backgroundColor: "rgba(15, 23, 42, 0.52)",
+    borderColor: "rgba(255, 255, 255, 0.16)",
     borderRadius: 999,
     borderWidth: 1,
     height: 44,

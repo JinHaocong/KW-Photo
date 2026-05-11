@@ -82,6 +82,8 @@ export const MobileSettingsPage = ({
     availableNavItems,
     backupUrl,
     cacheStats,
+    cacheStatsLoaded,
+    cacheStatsLoading,
     confirmClearAllCache,
     confirmClearUnusedCache,
     confirmClearUsefulCache,
@@ -102,6 +104,7 @@ export const MobileSettingsPage = ({
     preferences,
     preferred,
     primaryUrl,
+    refreshCacheStats,
     setBackupUrl,
     setPrimaryUrl,
     testResult,
@@ -297,19 +300,44 @@ export const MobileSettingsPage = ({
           meta={localCacheEnabled ? '已开启' : '已关闭'}
           title="本地缓存"
         >
-          <InfoRow label="总缓存" value={formatStorageSize(cacheStats.totalSize)} />
-          <InfoRow label="可用缓存" value={formatStorageSize(cacheStats.usefulSize)} />
-          <InfoRow label="残留缓存" value={formatStorageSize(cacheStats.unusedSize)} />
-          <InfoRow label="目录快照" value={`${cacheStats.directoryCount} 个`} />
-          <InfoRow label="文件夹封面" value={`${cacheStats.coverCount} 张`} />
-          <InfoRow label="列表缩略图" value={`${cacheStats.thumbnailCount} 张`} />
-          <InfoRow label="视频海报" value={`${cacheStats.videoPosterCount} 张`} />
-          <InfoRow label="高清缩略图" value={`${cacheStats.hdThumbnailCount} 张`} />
-          <InfoRow label="原图预览" value={`${cacheStats.originalImageCount} 张`} />
-          <InfoRow label="视频预览" value={`${cacheStats.originalVideoCount} 个`} />
-          <InfoRow label="可用资源" value={`${cacheStats.usefulCount} 项`} />
-          <InfoRow label="残留资源" value={`${cacheStats.unusedCount} 项`} />
-          <InfoRow label="最近缓存" value={formatTimestamp(cacheStats.latestCachedAt)} />
+          <Pressable
+            disabled={cacheStatsLoading}
+            onPress={() => void refreshCacheStats()}
+            style={[styles.secondaryButton, cacheStatsLoading ? styles.disabledButton : null]}
+          >
+            <Text style={styles.secondaryButtonText}>{cacheStatsLoading ? '读取中' : '刷新缓存统计'}</Text>
+          </Pressable>
+          {!cacheStatsLoaded ? (
+            <InfoRow label="缓存统计" value="点击刷新后读取，避免进入设置页时扫描本地缓存。" />
+          ) : (
+            <>
+              <InfoRow label="总缓存" value={formatStorageSize(cacheStats.totalSize)} />
+              {cacheStats.appDataSize > 0 ? (
+                <InfoRow label="系统占用估算" value={formatStorageSize(cacheStats.appDataSize)} />
+              ) : null}
+              {cacheStats.documentSize > 0 ? (
+                <InfoRow label="文稿目录" value={formatStorageSize(cacheStats.documentSize)} />
+              ) : null}
+              {cacheStats.applicationSupportSize > 0 ? (
+                <InfoRow label="应用支持" value={formatStorageSize(cacheStats.applicationSupportSize)} />
+              ) : null}
+              <InfoRow label="可用缓存" value={formatStorageSize(cacheStats.usefulSize)} />
+              <InfoRow label="残留缓存" value={formatStorageSize(cacheStats.unusedSize)} />
+              {cacheStats.nativeTemporarySize > 0 ? (
+                <InfoRow label="原生暂存" value={formatStorageSize(cacheStats.nativeTemporarySize)} />
+              ) : null}
+              <InfoRow label="目录快照" value={`${cacheStats.directoryCount} 个`} />
+              <InfoRow label="文件夹封面" value={`${cacheStats.coverCount} 张`} />
+              <InfoRow label="列表缩略图" value={`${cacheStats.thumbnailCount} 张`} />
+              <InfoRow label="视频海报" value={`${cacheStats.videoPosterCount} 张`} />
+              <InfoRow label="高清缩略图" value={`${cacheStats.hdThumbnailCount} 张`} />
+              <InfoRow label="原图预览" value={`${cacheStats.originalImageCount} 张`} />
+              <InfoRow label="视频预览" value={`${cacheStats.originalVideoCount} 个`} />
+              <InfoRow label="可用资源" value={`${cacheStats.usefulCount} 项`} />
+              <InfoRow label="残留资源" value={`${cacheStats.unusedCount} 项`} />
+              <InfoRow label="最近缓存" value={formatTimestamp(cacheStats.latestCachedAt)} />
+            </>
+          )}
           <Pressable onPress={confirmClearUsefulCache} style={styles.secondaryButton}>
             <Text style={styles.secondaryButtonText}>清理可用缓存</Text>
           </Pressable>

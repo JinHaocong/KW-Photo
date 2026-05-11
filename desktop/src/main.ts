@@ -5,6 +5,9 @@ import path from 'node:path';
 import process from 'node:process';
 
 let mainWindow: BrowserWindow | undefined;
+let cachedCacheIndex: CacheIndex | undefined;
+let cacheIndexLoadPromise: Promise<CacheIndex> | undefined;
+let cacheWriteQueue: Promise<void> = Promise.resolve();
 
 const WEB_DEV_SERVER_URL = process.env.KWPHOTO_WEB_DEV_SERVER_URL;
 const DEFAULT_WINDOW_WIDTH = 1440;
@@ -270,6 +273,8 @@ const fetchMediaBytes = async (url: string) => {
  * Reads one cache record and its blob bytes when present.
  */
 const readCacheRecord = async (key: string) => {
+  await waitForQueuedCacheWrites();
+
   const index = await readCacheIndex();
   const record = index.records.find((item) => item.key === key);
 
@@ -294,33 +299,38 @@ const readCacheRecord = async (key: string) => {
  * Writes one metadata record and optional blob into the app-data cache.
  */
 const writeCacheRecord = async (record: CacheRecord, blobBytes: number[] | null): Promise<void> => {
-  await getCacheStorageInfo();
+  await enqueueCacheWrite(async () => {
+    await getCacheStorageInfo();
 
-  const index = await readCacheIndex();
-  const current = index.records.find((item) => item.key === record.key);
-  const nextRecord: CacheRecord = { ...record };
+    const index = await readCacheIndex();
+    const current = index.records.find((item) => item.key === record.key);
+    const nextRecord: CacheRecord = { ...record };
 
-  if (blobBytes) {
-    const blobFileName = current?.blobFileName ?? createBlobFileName(record.key);
+    if (blobBytes) {
+      const blobFileName = current?.blobFileName ?? createBlobFileName(record.key);
 
-    await writeFile(path.join(getCacheBlobsDir(), blobFileName), Buffer.from(blobBytes));
-    nextRecord.blobFileName = blobFileName;
-    nextRecord.hasBlob = true;
-  } else if (current?.blobFileName) {
-    await rm(path.join(getCacheBlobsDir(), current.blobFileName), { force: true });
-  }
+      await writeFile(path.join(getCacheBlobsDir(), blobFileName), Buffer.from(blobBytes));
+      nextRecord.blobFileName = blobFileName;
+      nextRecord.hasBlob = true;
+    } else if (current?.blobFileName) {
+      await rm(path.join(getCacheBlobsDir(), current.blobFileName), { force: true });
+    }
 
-  index.records = [
-    ...index.records.filter((item) => item.key !== record.key),
-    nextRecord,
-  ];
-  await writeCacheIndex(index);
+    await writeCacheIndex({
+      records: [
+        ...index.records.filter((item) => item.key !== record.key),
+        nextRecord,
+      ],
+    });
+  });
 };
 
 /**
  * Lists cache records, optionally scoped to one workspace.
  */
 const listCacheRecords = async (scope?: string): Promise<CacheRecord[]> => {
+  await waitForQueuedCacheWrites();
+
   const index = await readCacheIndex();
 
   return scope ? index.records.filter((record) => record.scope === scope) : index.records;
@@ -343,56 +353,79 @@ const inspectCache = async () => {
  * Deletes cache records matching the given predicate and removes their blob files.
  */
 const deleteCacheRecords = async (predicate: (record: CacheRecord) => boolean): Promise<void> => {
-  const index = await readCacheIndex();
-  const removedRecords = index.records.filter(predicate);
+  await enqueueCacheWrite(async () => {
+    const index = await readCacheIndex();
+    const removedRecords: CacheRecord[] = [];
+    const nextRecords = index.records.filter((record) => {
+      const shouldRemove = predicate(record);
 
-  await Promise.all(
-    removedRecords.map((record) => (
-      record.blobFileName
-        ? rm(path.join(getCacheBlobsDir(), record.blobFileName), { force: true })
-        : Promise.resolve()
-    )),
-  );
+      if (shouldRemove) {
+        removedRecords.push(record);
+      }
 
-  index.records = index.records.filter((record) => !predicate(record));
-  await writeCacheIndex(index);
+      return !shouldRemove;
+    });
+
+    await Promise.all(
+      removedRecords.map((record) => (
+        record.blobFileName
+          ? rm(path.join(getCacheBlobsDir(), record.blobFileName), { force: true })
+          : Promise.resolve()
+      )),
+    );
+
+    await writeCacheIndex({ records: nextRecords });
+  });
 };
 
 /**
  * Removes blob files that no cache index entry can reach, and drops metadata for missing blobs.
  */
 const clearUnusedCachePayloads = async (): Promise<void> => {
-  const inspection = await inspectCacheStorage();
-  const staleRecordKeys = new Set(
-    inspection.records
-      .filter((record) => record.blobFileName && record.hasBlob === false)
-      .map((record) => record.key),
-  );
+  await enqueueCacheWrite(async () => {
+    const inspection = await inspectCacheStorage({ waitForQueuedWrites: false });
+    const staleRecordKeys = new Set(
+      inspection.records
+        .filter((record) => record.blobFileName && record.hasBlob === false)
+        .map((record) => record.key),
+    );
 
-  await Promise.all(
-    inspection.unusedBlobFiles.map((file) => rm(path.join(getCacheBlobsDir(), file.fileName), { force: true })),
-  );
+    await Promise.all(
+      inspection.unusedBlobFiles.map((file) => rm(path.join(getCacheBlobsDir(), file.fileName), { force: true })),
+    );
 
-  if (staleRecordKeys.size > 0) {
-    await writeCacheIndex({
-      records: inspection.records.filter((record) => !staleRecordKeys.has(record.key)),
-    });
-  }
+    if (staleRecordKeys.size > 0) {
+      await writeCacheIndex({
+        records: inspection.records.filter((record) => !staleRecordKeys.has(record.key)),
+      });
+    }
+  });
 };
 
 /**
  * Removes the complete desktop cache root, including indexed records and orphaned blob files.
  */
 const clearEntireCacheStorage = async (): Promise<void> => {
-  await rm(getCacheRootDir(), { force: true, recursive: true });
-  await mkdir(getCacheBlobsDir(), { recursive: true });
-  await writeCacheIndex({ records: [] });
+  await enqueueCacheWrite(async () => {
+    // Settle any in-flight lazy index load before replacing the in-memory cache.
+    await readCacheIndex();
+
+    await rm(getCacheRootDir(), { force: true, recursive: true });
+    await mkdir(getCacheBlobsDir(), { recursive: true });
+    await writeCacheIndex({ records: [] });
+  });
 };
 
 /**
  * Reads all blob files and annotates records whose payload disappeared from disk.
  */
-const inspectCacheStorage = async (): Promise<{ records: CacheRecord[]; unusedBlobFiles: CacheBlobFile[] }> => {
+const inspectCacheStorage = async (
+  options: { waitForQueuedWrites?: boolean } = {},
+): Promise<{ records: CacheRecord[]; unusedBlobFiles: CacheBlobFile[] }> => {
+  if (options.waitForQueuedWrites ?? true) {
+    await waitForQueuedCacheWrites();
+  }
+
   await getCacheStorageInfo();
 
   const index = await readCacheIndex();
@@ -435,27 +468,78 @@ const listCacheBlobFiles = async (): Promise<CacheBlobFile[]> => {
 };
 
 /**
- * Loads the JSON cache index, returning an empty index for first run.
+ * Loads the JSON cache index from disk, returning an empty index for first run.
  */
-const readCacheIndex = async (): Promise<CacheIndex> => {
+const loadCacheIndexFromDisk = async (): Promise<CacheIndex> => {
   try {
     const content = await readFile(getCacheIndexPath(), 'utf8');
     const parsed = JSON.parse(content) as CacheIndex;
 
-    return {
-      records: Array.isArray(parsed.records) ? parsed.records : [],
-    };
+    return normalizeCacheIndex(parsed);
   } catch {
     return { records: [] };
   }
 };
 
 /**
- * Persists the cache index atomically enough for the single-window desktop app.
+ * Returns the process-level cache index, loading index.json only once per app run.
+ */
+const readCacheIndex = async (): Promise<CacheIndex> => {
+  if (cachedCacheIndex) {
+    return cachedCacheIndex;
+  }
+
+  cacheIndexLoadPromise ??= loadCacheIndexFromDisk()
+    .then((index) => {
+      cachedCacheIndex = index;
+
+      return index;
+    })
+    .finally(() => {
+      cacheIndexLoadPromise = undefined;
+    });
+
+  return cacheIndexLoadPromise;
+};
+
+/**
+ * Persists the cache index and refreshes the in-memory cache after the write succeeds.
  */
 const writeCacheIndex = async (index: CacheIndex): Promise<void> => {
+  const normalizedIndex = normalizeCacheIndex(index);
+
   await mkdir(getCacheRootDir(), { recursive: true });
-  await writeFile(getCacheIndexPath(), JSON.stringify(index), 'utf8');
+  await writeFile(getCacheIndexPath(), JSON.stringify(normalizedIndex), 'utf8');
+
+  cachedCacheIndex = normalizedIndex;
+};
+
+/**
+ * Runs cache mutations in sequence so full index writes cannot overwrite newer records.
+ */
+const enqueueCacheWrite = <Result>(writeTask: () => Promise<Result>): Promise<Result> => {
+  const queuedTask = cacheWriteQueue.then(writeTask, writeTask);
+
+  // Keep the queue usable after one failed write; the failure still propagates to its caller.
+  cacheWriteQueue = queuedTask.then(() => undefined, () => undefined);
+
+  return queuedTask;
+};
+
+/**
+ * Waits for pending cache writes before serving read-only cache IPC calls.
+ */
+const waitForQueuedCacheWrites = async (): Promise<void> => {
+  await cacheWriteQueue;
+};
+
+/**
+ * Normalizes parsed index data into the shape used by the cache backend.
+ */
+const normalizeCacheIndex = (index: Partial<CacheIndex>): CacheIndex => {
+  return {
+    records: Array.isArray(index.records) ? index.records : [],
+  };
 };
 
 const getCacheRootDir = (): string => path.join(app.getPath('userData'), 'local-cache');

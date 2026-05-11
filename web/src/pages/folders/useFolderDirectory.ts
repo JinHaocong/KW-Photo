@@ -6,6 +6,7 @@ import {
   fetchRootFolders,
 } from '../../services/folders-service';
 import {
+  createDirectorySnapshotDigest,
   createLocalCacheFolderRef,
   readCachedDirectory,
   writeCachedDirectory,
@@ -136,5 +137,5 @@ export const useFolderDirectory = ({
  * Compares cached and fresh directory snapshots before replacing visible content.
  */
 const isSameDirectory = (cachedDirectory: FolderDirectory, nextDirectory: FolderDirectory): boolean => {
-  return JSON.stringify(cachedDirectory) === JSON.stringify(nextDirectory);
+  return createDirectorySnapshotDigest(cachedDirectory) === createDirectorySnapshotDigest(nextDirectory);
 };

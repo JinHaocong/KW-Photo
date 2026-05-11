@@ -1491,6 +1491,26 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
   },
+  duplicateFilesSheetDialogBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: MOBILE_SAGE_NEUTRALS.sheetOverlay,
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 24,
+  },
+  duplicateFilesSheetDialogContent: {
+    maxHeight: '92%',
+    width: '100%',
+  },
+  duplicateFilesSheetDialogLayer: {
+    ...StyleSheet.absoluteFillObject,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    elevation: 20,
+    overflow: 'hidden',
+    zIndex: 20,
+  },
   duplicateFilesSheet: {
     gap: 6,
     marginTop: 8,

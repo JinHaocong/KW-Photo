@@ -256,11 +256,18 @@ export const MobileAdminPage = ({
     [activeTab, cacheStats, galleries.length, taskCounts, users.length],
   );
 
-  const loadCachePreferences = useCallback(async (): Promise<void> => {
+  const loadCachePreferences = useCallback(async ({
+    includeStats = true,
+  }: {
+    includeStats?: boolean;
+  } = {}): Promise<void> => {
     const preferences = await readMobilePreferences();
 
     setCacheEnabled(preferences.localCacheEnabled ?? true);
-    setCacheStats(await readMobileCacheStats());
+
+    if (includeStats) {
+      setCacheStats(await readMobileCacheStats());
+    }
   }, []);
 
   useEffect(() => {
@@ -310,6 +317,10 @@ export const MobileAdminPage = ({
       }, 180);
     };
 
+    if (activeTab !== 'cache') {
+      return undefined;
+    }
+
     const unsubscribe = subscribeMobileCacheChanges(scheduleCacheStatsRefresh);
 
     return () => {
@@ -320,7 +331,7 @@ export const MobileAdminPage = ({
         clearTimeout(cacheStatsRefreshTimerRef.current);
       }
     };
-  }, []);
+  }, [activeTab]);
 
   /**
    * Changes the active admin tab and persists it as a mobile behavior preference.
@@ -408,7 +419,7 @@ export const MobileAdminPage = ({
         const [stat, counts] = await Promise.all([
           fetchAdminGalleryStat(apiOptions, 'all'),
           fetchAdminTaskCounts(apiOptions),
-          loadCachePreferences(),
+          loadCachePreferences({ includeStats: false }),
         ]);
 
         setGalleryStat(stat);
@@ -832,7 +843,7 @@ export const MobileAdminPage = ({
     await runAdminAction('clear-unused-cache', async () => {
       await clearUnusedMobileLocalCache();
       await loadCachePreferences();
-      return '残留缓存已清理';
+      return '残留和系统暂存缓存已清理';
     });
   };
 

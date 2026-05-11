@@ -27,6 +27,11 @@ const VIDEO_POSTER_FADE_DURATION_MS = 140;
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 0.25;
 
 /**
+ * Keeps the platform fullscreen affordance visible in native video controls.
+ */
+const NATIVE_VIDEO_FULLSCREEN_OPTIONS = { enable: true } as const;
+
+/**
  * Creates a video player that is released after this component's own cleanup effects.
  */
 const createConfiguredVideoPlayer = (): VideoPlayer => {
@@ -326,7 +331,7 @@ export const InlineVideoPreview = ({
     <View style={styles.previewVideoShell}>
       <VideoView
         contentFit="contain"
-        fullscreenOptions={{ enable: true }}
+        fullscreenOptions={NATIVE_VIDEO_FULLSCREEN_OPTIONS}
         nativeControls
         onFirstFrameRender={() => {
           setFirstFrameRendered(true);
@@ -384,14 +389,16 @@ export const NativeVideoControlsOverlay = ({
   const [nativeLoadError, setNativeLoadError] = useState("");
   const [nativeLoadedSourceUri, setNativeLoadedSourceUri] = useState<string>();
   const [nativePlaybackStarted, setNativePlaybackStarted] = useState(false);
-  const [nativePlaying, setNativePlaying] = useState(false);
   const nativeAutoplayTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const nativePlaybackRevealTimerRef = useRef<
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
   const onLoadCompleteRef = useRef(onLoadComplete);
   const onLoadErrorRef = useRef(onLoadError);
+  const nativeReplaceSourceUriRef = useRef<string | undefined>(undefined);
+  const nativeAppStateRef = useRef<AppStateStatus>(AppState.currentState);
   const playLoadingRef = useRef(Boolean(playLoading));
+  const suppressNativeAutoplayAfterBackgroundRef = useRef(false);
   const visibleRef = useRef(visible);
   const nativePlayer = useMemo(createConfiguredVideoPlayer, []);
   const { capturePlaybackSnapshot, restorePlaybackSnapshot } =
@@ -432,19 +439,29 @@ export const NativeVideoControlsOverlay = ({
   }, [clearNativePlaybackRevealTimer]);
 
   /**
-   * Starts playback as soon as the native source is ready while the parent opens controls.
+   * Completes source loading and only auto-plays while the app is still foreground-active.
    */
   const completeNativeLoadIfRequested = useCallback((): void => {
     if (visibleRef.current || playLoadingRef.current) {
-      playVideoPlayer(nativePlayer);
+      if (
+        nativeAppStateRef.current === "active" &&
+        !suppressNativeAutoplayAfterBackgroundRef.current
+      ) {
+        playVideoPlayer(nativePlayer);
+      }
+
       onLoadCompleteRef.current?.();
     }
   }, [nativePlayer]);
+  const nativePlaybackActionsRef = useRef({
+    capturePlaybackSnapshot,
+    completeNativeLoadIfRequested,
+    restorePlaybackSnapshot,
+  });
 
   useEventListener(nativePlayer, "playingChange", ({ isPlaying }) => {
-    setNativePlaying(isPlaying);
-
     if (isPlaying) {
+      suppressNativeAutoplayAfterBackgroundRef.current = false;
       clearNativeAutoplayTimers();
 
       nativePlaybackRevealTimerRef.current = setTimeout(() => {
@@ -516,8 +533,38 @@ export const NativeVideoControlsOverlay = ({
   }, [onLoadComplete, onLoadError]);
 
   useEffect(() => {
+    nativePlaybackActionsRef.current = {
+      capturePlaybackSnapshot,
+      completeNativeLoadIfRequested,
+      restorePlaybackSnapshot,
+    };
+  }, [
+    capturePlaybackSnapshot,
+    completeNativeLoadIfRequested,
+    restorePlaybackSnapshot,
+  ]);
+
+  useEffect(() => {
     visibleRef.current = visible;
+
+    if (!visible) {
+      suppressNativeAutoplayAfterBackgroundRef.current = false;
+    }
   }, [visible]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nativeAppStateRef.current === "active" && nextAppState !== "active") {
+        suppressNativeAutoplayAfterBackgroundRef.current = true;
+      }
+
+      nativeAppStateRef.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     playLoadingRef.current = Boolean(playLoading);
@@ -527,26 +574,26 @@ export const NativeVideoControlsOverlay = ({
     let cancelled = false;
 
     if (!sourceUri) {
-      capturePlaybackSnapshot({ pause: true });
+      nativePlaybackActionsRef.current.capturePlaybackSnapshot({ pause: true });
+      nativeReplaceSourceUriRef.current = undefined;
       setNativeFirstFrameRendered(false);
       setNativeLoadedSourceUri(undefined);
       setNativeLoadError("");
       setNativePlaybackStarted(false);
-      setNativePlaying(false);
       clearNativePlaybackRevealTimer();
 
-      try {
-        nativePlayer.pause();
-      } catch {
-        // Native player may already be detached while the modal is closing.
-      }
+      pauseVideoPlayer(nativePlayer);
       return undefined;
     }
 
+    if (nativeReplaceSourceUriRef.current === sourceUri) {
+      return undefined;
+    }
+
+    nativeReplaceSourceUriRef.current = sourceUri;
     setNativeLoadError("");
     setNativeFirstFrameRendered(false);
     setNativePlaybackStarted(false);
-    setNativePlaying(false);
     clearNativePlaybackRevealTimer();
 
     void nativePlayer
@@ -554,14 +601,17 @@ export const NativeVideoControlsOverlay = ({
       .then(() => {
         if (!cancelled) {
           setNativeLoadedSourceUri(sourceUri);
-          restorePlaybackSnapshot({ requireLoaded: false });
-          completeNativeLoadIfRequested();
+          nativePlaybackActionsRef.current.restorePlaybackSnapshot({
+            requireLoaded: false,
+          });
+          nativePlaybackActionsRef.current.completeNativeLoadIfRequested();
         }
       })
       .catch(() => {
         if (!cancelled) {
           const messageText = "视频加载失败，请稍后重试";
 
+          nativeReplaceSourceUriRef.current = undefined;
           setNativeLoadError(messageText);
           onLoadErrorRef.current?.(messageText);
         }
@@ -569,21 +619,14 @@ export const NativeVideoControlsOverlay = ({
 
     return () => {
       cancelled = true;
-      capturePlaybackSnapshot({ pause: true });
+      nativePlaybackActionsRef.current.capturePlaybackSnapshot({ pause: true });
       clearNativePlaybackRevealTimer();
 
-      try {
-        nativePlayer.pause();
-      } catch {
-        // Native player may already be detached while the modal is closing.
-      }
+      pauseVideoPlayer(nativePlayer);
     };
   }, [
-    capturePlaybackSnapshot,
     clearNativePlaybackRevealTimer,
-    completeNativeLoadIfRequested,
     nativePlayer,
-    restorePlaybackSnapshot,
     sourceUri,
   ]);
 
@@ -591,10 +634,10 @@ export const NativeVideoControlsOverlay = ({
     if (!visible || !sourceUri || nativeLoadedSourceUri !== sourceUri) {
       clearNativeAutoplayTimers();
 
-      try {
-        nativePlayer.pause();
-      } catch {
-        // Native player may already be detached while the overlay is hidden.
+      if (!visible) {
+        capturePlaybackSnapshot({ pause: true });
+      } else {
+        pauseVideoPlayer(nativePlayer);
       }
       return;
     }
@@ -610,23 +653,12 @@ export const NativeVideoControlsOverlay = ({
     }
   }, [
     clearNativeAutoplayTimers,
+    capturePlaybackSnapshot,
     nativeLoadedSourceUri,
     nativePlayer,
     requestNativeAutoplay,
     restorePlaybackSnapshot,
     sourceUri,
-    visible,
-  ]);
-
-  useEffect(() => {
-    if (visible && nativeSourceReady && !nativePlaying && !nativeLoadError) {
-      requestNativeAutoplay();
-    }
-  }, [
-    nativeLoadError,
-    nativePlaying,
-    nativeSourceReady,
-    requestNativeAutoplay,
     visible,
   ]);
 
@@ -657,7 +689,7 @@ export const NativeVideoControlsOverlay = ({
     >
       <VideoView
         contentFit="contain"
-        fullscreenOptions={{ enable: true }}
+        fullscreenOptions={NATIVE_VIDEO_FULLSCREEN_OPTIONS}
         nativeControls={visible}
         onFirstFrameRender={() => setNativeFirstFrameRendered(true)}
         player={nativePlayer}
@@ -765,14 +797,8 @@ const useVideoPlaybackResume = ({
   const lastPlayingAtRef = useRef(0);
   const latestPlayingRef = useRef(false);
   const latestPositionRef = useRef(0);
-  const restoreTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const snapshotRef = useRef<VideoPlaybackSnapshot | undefined>(undefined);
   const activePlaybackKey = playbackKey ?? sourceUri;
-
-  const clearRestoreTimers = useCallback((): void => {
-    restoreTimersRef.current.forEach((timer) => clearTimeout(timer));
-    restoreTimersRef.current = [];
-  }, []);
 
   useEventListener(player, "timeUpdate", ({ currentTime }) => {
     if (!active || !activePlaybackKey || !sourceUri) {
@@ -793,10 +819,6 @@ const useVideoPlaybackResume = ({
 
     if (appStateRef.current === "active") {
       latestPlayingRef.current = isPlaying;
-
-      if (!isPlaying) {
-        clearRestoreTimers();
-      }
     }
   });
 
@@ -820,42 +842,10 @@ const useVideoPlaybackResume = ({
     }
   }, [player]);
 
-  /**
-   * Retries restore briefly because native players can report ready before seek/play is accepted.
-   */
-  const schedulePlaybackRestoreRetries = useCallback((
-    snapshot: VideoPlaybackSnapshot,
-    options: { resume?: boolean } = {},
-  ): void => {
-    clearRestoreTimers();
-    restoreTimersRef.current = VIDEO_AUTOPLAY_RETRY_DELAYS_MS.map((delay) =>
-      setTimeout(() => {
-        const currentSnapshot = snapshotRef.current;
-
-        if (
-          !active ||
-          !activePlaybackKey ||
-          currentSnapshot?.playbackKey !== snapshot.playbackKey
-        ) {
-          return;
-        }
-
-        applyPlaybackSnapshot(snapshot, options);
-      }, delay),
-    );
-  }, [
-    active,
-    activePlaybackKey,
-    applyPlaybackSnapshot,
-    clearRestoreTimers,
-  ]);
-
   const capturePlaybackSnapshot = useCallback((options: { pause?: boolean } = {}): void => {
     if (!active || !activePlaybackKey || !sourceUri) {
       return;
     }
-
-    clearRestoreTimers();
 
     const previousSnapshot = snapshotRef.current;
 
@@ -889,7 +879,7 @@ const useVideoPlaybackResume = ({
     if (options.pause) {
       pauseVideoPlayer(player);
     }
-  }, [active, activePlaybackKey, clearRestoreTimers, player, sourceUri]);
+  }, [active, activePlaybackKey, player, sourceUri]);
 
   const restorePlaybackSnapshot = useCallback((options: { requireLoaded?: boolean; resume?: boolean } = {}): boolean => {
     const requireLoaded = options.requireLoaded ?? true;
@@ -904,10 +894,6 @@ const useVideoPlaybackResume = ({
       return false;
     }
 
-    if (options.resume) {
-      schedulePlaybackRestoreRetries(snapshot, options);
-    }
-
     applyPlaybackSnapshot(snapshot, options);
 
     return true;
@@ -915,7 +901,6 @@ const useVideoPlaybackResume = ({
     activePlaybackKey,
     applyPlaybackSnapshot,
     loaded,
-    schedulePlaybackRestoreRetries,
     sourceUri,
   ]);
 
@@ -923,7 +908,6 @@ const useVideoPlaybackResume = ({
     if (!activePlaybackKey || !sourceUri) {
       latestPlayingRef.current = false;
       latestPositionRef.current = 0;
-      clearRestoreTimers();
       return;
     }
 
@@ -932,31 +916,21 @@ const useVideoPlaybackResume = ({
     latestPositionRef.current =
       snapshot?.playbackKey === activePlaybackKey ? snapshot.position : 0;
     latestPlayingRef.current = isVideoPlayerPlaying(player);
-  }, [activePlaybackKey, clearRestoreTimers, player, sourceUri]);
+  }, [activePlaybackKey, player, sourceUri]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
-      const previousAppState = appStateRef.current;
-      const returningToForeground =
-        /inactive|background/.test(previousAppState) && nextAppState === "active";
-
       if (nextAppState !== "active") {
         capturePlaybackSnapshot({ pause: true });
       }
 
       appStateRef.current = nextAppState;
-
-      if (returningToForeground) {
-        restorePlaybackSnapshot({ resume: true });
-      }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [capturePlaybackSnapshot, restorePlaybackSnapshot]);
-
-  useEffect(() => clearRestoreTimers, [clearRestoreTimers]);
+  }, [capturePlaybackSnapshot]);
 
   return {
     capturePlaybackSnapshot,

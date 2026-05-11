@@ -81,6 +81,7 @@ interface LocalCacheResourceRecord {
   contentType?: string;
   createdAt: number;
   directory?: FolderDirectory;
+  directoryDigest?: string;
   fileId?: number;
   folderId?: number;
   folderKey: string;
@@ -266,6 +267,59 @@ export const createLocalCacheFolderRef = ({
 };
 
 /**
+ * Creates a stable directory summary for cheap cache-vs-network comparisons.
+ */
+export const createDirectorySnapshotDigest = (directory: FolderDirectory): string => {
+  const folderDigest = directory.folders
+    .map((folder) => [
+      folder.id,
+      folder.name,
+      folder.path,
+      folder.fileCount,
+      folder.childCount,
+      folder.updatedAt,
+      folder.coverFallback,
+      folder.coverHashes.join(','),
+      folder.trashCount,
+    ].join('~'))
+    .join('|');
+  const fileDigest = directory.files
+    .map((group) => {
+      const filesDigest = group.list
+        .map((file) => [
+          file.id,
+          file.md5,
+          file.name,
+          file.fileType,
+          file.dateValue ?? '',
+          file.modifiedValue ?? file.modifiedDateLabel ?? '',
+          file.sizeValue ?? file.sizeLabel ?? '',
+          file.width ?? '',
+          file.height ?? '',
+          file.duration ?? '',
+        ].join('~'))
+        .join(',');
+
+      return [group.day, group.addr ?? '', group.list.length, filesDigest].join(':');
+    })
+    .join('|');
+  const breadcrumbDigest = directory.breadcrumbs
+    .map((item) => [item.folderId ?? item.galleryFolderId ?? item.id ?? '', item.name, item.path ?? ''].join('~'))
+    .join('|');
+
+  return [
+    directory.folderId ?? 'root',
+    directory.path,
+    directory.trashCount,
+    directory.folders.length,
+    directory.files.length,
+    folderDigest,
+    fileDigest,
+    breadcrumbDigest,
+  ].join('::');
+};
+
+/**
  * Reads one cached folder directory by current scope and folder id.
  */
 export const readCachedDirectory = async ({
@@ -297,6 +351,7 @@ export const writeCachedDirectory = async ({
   await writeCacheRecord({
     createdAt: now,
     directory,
+    directoryDigest: createDirectorySnapshotDigest(directory),
     folderId: folder.folderId,
     folderKey: folder.folderKey,
     folderName: folder.folderName,

@@ -54,10 +54,14 @@ const SETTINGS_MESSAGE_VISIBLE_MS = 2200;
 
 const EMPTY_CACHE_STATS: MobileCacheStats = {
   approximateSize: 0,
+  appDataSize: 0,
+  applicationSupportSize: 0,
   coverCount: 0,
   directoryCount: 0,
+  documentSize: 0,
   hdThumbnailCount: 0,
   mediaCount: 0,
+  nativeTemporarySize: 0,
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
@@ -87,6 +91,8 @@ export const useMobileSettingsController = ({
   const [applyingServer, setApplyingServer] = useState(false);
   const [backupUrl, setBackupUrl] = useState('');
   const [cacheStats, setCacheStats] = useState<MobileCacheStats>(EMPTY_CACHE_STATS);
+  const [cacheStatsLoaded, setCacheStatsLoaded] = useState(false);
+  const [cacheStatsLoading, setCacheStatsLoading] = useState(false);
   const [localCacheEnabled, setLocalCacheEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -109,12 +115,8 @@ export const useMobileSettingsController = ({
     setLoading(true);
 
     try {
-      const [nextStats, nextPreferences] = await Promise.all([
-        readMobileCacheStats(),
-        readMobilePreferences(),
-      ]);
+      const nextPreferences = await readMobilePreferences();
 
-      setCacheStats(nextStats);
       setPreferences(nextPreferences);
       setPrimaryUrl(nextPreferences.primaryServerUrl || nextPreferences.serverUrl || session.serverUrl);
       setBackupUrl(nextPreferences.backupServerUrl ?? '');
@@ -125,6 +127,22 @@ export const useMobileSettingsController = ({
       setLoading(false);
     }
   }, [session.serverUrl]);
+
+  /**
+   * Runs the expensive cache inspection only when the user asks for cache numbers.
+   */
+  const refreshCacheStats = useCallback(async (): Promise<void> => {
+    setCacheStatsLoading(true);
+
+    try {
+      setCacheStats(await readMobileCacheStats());
+      setCacheStatsLoaded(true);
+    } catch {
+      setMessage('读取缓存统计失败');
+    } finally {
+      setCacheStatsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void loadSettings();
@@ -295,7 +313,7 @@ export const useMobileSettingsController = ({
   const handleClearUsefulCache = async (): Promise<void> => {
     await clearUsefulMobileLocalCache();
     setMessage('可用缓存已清理');
-    await loadSettings();
+    await refreshCacheStats();
   };
 
   /**
@@ -303,8 +321,8 @@ export const useMobileSettingsController = ({
    */
   const handleClearUnusedCache = async (): Promise<void> => {
     await clearUnusedMobileLocalCache();
-    setMessage('残留缓存已清理');
-    await loadSettings();
+    setMessage('残留和系统暂存缓存已清理');
+    await refreshCacheStats();
   };
 
   /**
@@ -313,7 +331,7 @@ export const useMobileSettingsController = ({
   const handleClearAllCache = async (): Promise<void> => {
     await clearAllMobileLocalCache();
     setMessage('全部缓存已清理');
-    await loadSettings();
+    await refreshCacheStats();
   };
 
   /**
@@ -401,7 +419,7 @@ export const useMobileSettingsController = ({
    * Confirms orphan and legacy cache cleanup before removing unreachable payloads.
    */
   const confirmClearUnusedCache = (): void => {
-    Alert.alert('清理残留缓存', '将清除索引外文件、旧版本目录缓存和失效记录，不会主动删除当前可命中的缓存。', [
+    Alert.alert('清理残留缓存', '将清除索引外文件、旧版本目录缓存、失效记录，以及系统临时图片/网络缓存；不会主动删除当前可命中的业务缓存。', [
       { text: '取消', style: 'cancel' },
       { text: '清理残留', style: 'destructive', onPress: () => void handleClearUnusedCache() },
     ]);
@@ -411,7 +429,7 @@ export const useMobileSettingsController = ({
    * Confirms deleting every account cache and the physical mobile cache folder.
    */
   const confirmClearAllCache = (): void => {
-    Alert.alert('清理全部缓存', '将清除所有可用缓存和残留缓存，并删除移动端缓存目录。不影响服务端文件。', [
+    Alert.alert('清理全部缓存', '将清除所有可用缓存、残留缓存、原生图片/网络缓存和临时目录。不影响服务端文件。', [
       { text: '取消', style: 'cancel' },
       { text: '全部清理', style: 'destructive', onPress: () => void handleClearAllCache() },
     ]);
@@ -423,6 +441,8 @@ export const useMobileSettingsController = ({
     availableNavItems,
     backupUrl,
     cacheStats,
+    cacheStatsLoaded,
+    cacheStatsLoading,
     confirmClearAllCache,
     confirmClearUnusedCache,
     confirmClearUsefulCache,
@@ -443,6 +463,7 @@ export const useMobileSettingsController = ({
     preferences,
     preferred,
     primaryUrl,
+    refreshCacheStats,
     setBackupUrl,
     setPreferred,
     setPrimaryUrl,

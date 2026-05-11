@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
+import { NativeModules, Platform } from 'react-native';
 
 import { createAsyncConcurrencyLimiter } from '@kwphoto/core';
 import type { FolderDirectory } from '@kwphoto/core';
@@ -14,6 +15,7 @@ export type MobileLocalCacheResourceKind =
   | 'video-preview';
 
 export interface MobileLocalCacheFolderRef {
+  fallbackScopes?: string[];
   folderId?: number;
   folderKey: string;
   folderName: string;
@@ -23,10 +25,14 @@ export interface MobileLocalCacheFolderRef {
 
 export interface MobileCacheStats {
   approximateSize: number;
+  appDataSize: number;
+  applicationSupportSize: number;
   coverCount: number;
   directoryCount: number;
+  documentSize: number;
   latestCachedAt?: number;
   mediaCount: number;
+  nativeTemporarySize: number;
   hdThumbnailCount: number;
   originalImageCount: number;
   originalVideoCount: number;
@@ -62,7 +68,7 @@ export interface MobileCacheFolderSummary {
 
 export interface MobileCacheChangeDetail {
   folderScopeKeys?: string[];
-  reason: 'clear-all' | 'clear-scope' | 'delete-folder' | 'write';
+  reason: 'clear-all' | 'clear-scope' | 'clear-unused' | 'delete-folder' | 'write';
   scope?: string;
 }
 
@@ -86,12 +92,47 @@ interface MobileLocalCacheRecordMeta {
   variant?: string;
 }
 
+interface MobileCacheIndexState {
+  recordByKey: Map<string, MobileLocalCacheRecordMeta>;
+  records: MobileLocalCacheRecordMeta[];
+  recordsByFolderScopeKey: Map<string, MobileLocalCacheRecordMeta[]>;
+}
+
 interface CachePayloadSize {
   exists: boolean;
   size: number;
 }
 
+interface CacheTreeStats {
+  count: number;
+  size: number;
+}
+
+interface NativeMobileStorageStats {
+  appDataSize: number;
+  applicationSupportSize: number;
+  cacheSize: number;
+  clearableCount: number;
+  clearableSize: number;
+  documentSize: number;
+  temporarySize: number;
+}
+
+interface NativeMobileStorageModule {
+  clearTemporaryStorage?: (options: NativeMobileStorageOptions) => Promise<{ deletedCount?: number }>;
+  getTemporaryStorageStats?: (options: NativeMobileStorageOptions) => Promise<Partial<NativeMobileStorageStats>>;
+}
+
+interface NativeMobileStorageOptions {
+  excludedUris: string[];
+}
+
+interface ExternalTemporaryCacheStats extends CacheTreeStats {
+  nativeStorageStats: NativeMobileStorageStats;
+}
+
 interface MobileCachePayloadSnapshot {
+  nativeStorageStats: NativeMobileStorageStats;
   referencedFileSizeByUri: Map<string, number>;
   referencedDataKeys: Set<string>;
   referencedFileUris: Set<string>;
@@ -103,6 +144,7 @@ interface MobileCachePayloadSnapshot {
 }
 
 interface ReadCachedMobileDirectoryParams {
+  fallbackScopes?: string[];
   folderId?: number;
   scope: string;
 }
@@ -135,11 +177,22 @@ const LEGACY_DIRECTORY_CACHE_PREFIX = 'kwphoto.mobile.directory-cache.v1:';
 const MOBILE_MEDIA_DOWNLOAD_CONCURRENCY = 4;
 const MOBILE_MEDIA_DOWNLOAD_QUEUE_CLEARED_ERROR = new Error('Mobile media download queue cleared');
 const MEDIA_CACHE_FAILURE_TTL = 60_000;
+const EMPTY_NATIVE_STORAGE_STATS: NativeMobileStorageStats = {
+  appDataSize: 0,
+  applicationSupportSize: 0,
+  cacheSize: 0,
+  clearableCount: 0,
+  clearableSize: 0,
+  documentSize: 0,
+  temporarySize: 0,
+};
 
 const pendingMediaRequests = new Map<string, Promise<string | undefined>>();
 const mediaFailureMap = new Map<string, number>();
 const mediaDownloadLimiter = createAsyncConcurrencyLimiter(MOBILE_MEDIA_DOWNLOAD_CONCURRENCY);
 const cacheChangeListeners = new Set<MobileCacheChangeListener>();
+const nativeMobileStorage = NativeModules.KWPhotoStorage as NativeMobileStorageModule | undefined;
+let cacheIndexStatePromise: Promise<MobileCacheIndexState> | undefined;
 let cacheIndexMutationQueue: Promise<void> = Promise.resolve();
 let cacheInvalidationRevision = 0;
 
@@ -154,21 +207,45 @@ export const subscribeMobileCacheChanges = (listener: MobileCacheChangeListener)
   };
 };
 
+interface MobileLocalCacheScopeOptions {
+  serverAliases?: Array<string | undefined>;
+  serverUrl?: string;
+  userId?: number | string;
+  username?: string;
+}
+
 /**
- * Creates the same account-level cache scope used by the Web workspace.
+ * Creates a user-level cache scope so internal and external addresses share the same payloads.
  */
 export const createMobileLocalCacheScope = ({
+  userId,
+  username,
+}: MobileLocalCacheScopeOptions): string => {
+  const accountKey = userId === undefined ? username || 'guest' : String(userId);
+
+  return `user:${accountKey}`;
+};
+
+/**
+ * Builds single-address fallback scopes so caches written before user-level scoping remain readable.
+ */
+export const createMobileLocalCacheFallbackScopes = ({
+  serverAliases = [],
   serverUrl,
   userId,
   username,
-}: {
-  serverUrl: string;
-  userId?: number | string;
-  username?: string;
-}): string => {
+}: MobileLocalCacheScopeOptions): string[] => {
   const accountKey = userId === undefined ? username || 'guest' : String(userId);
+  const primaryScope = createMobileLocalCacheScope({
+    serverAliases,
+    serverUrl,
+    userId,
+    username,
+  });
 
-  return `${normalizeServerUrl(serverUrl)}::${accountKey}`;
+  return normalizeServerUrls([serverUrl, ...serverAliases])
+    .map((server) => `${server}::${accountKey}`)
+    .filter((scope) => scope !== primaryScope);
 };
 
 /**
@@ -176,12 +253,14 @@ export const createMobileLocalCacheScope = ({
  */
 export const createMobileLocalCacheFolderRef = ({
   directory,
+  fallbackScopes = [],
   folderId,
   folderName,
   folderPath,
   scope,
 }: {
   directory?: FolderDirectory;
+  fallbackScopes?: string[];
   folderId?: number;
   folderName?: string;
   folderPath?: string;
@@ -191,6 +270,7 @@ export const createMobileLocalCacheFolderRef = ({
   const folderKey = resolvedFolderId && resolvedFolderId > 0 ? String(resolvedFolderId) : 'root';
 
   return {
+    fallbackScopes: uniqueStrings(fallbackScopes.filter((fallbackScope) => fallbackScope !== scope)),
     folderId: resolvedFolderId,
     folderKey,
     folderName: folderName || getDirectoryDisplayName(directory) || '全部',
@@ -203,24 +283,30 @@ export const createMobileLocalCacheFolderRef = ({
  * Reads one cached directory snapshot for the current account scope.
  */
 export const readCachedMobileDirectory = async ({
+  fallbackScopes = [],
   folderId,
   scope,
 }: ReadCachedMobileDirectoryParams): Promise<FolderDirectory | undefined> => {
-  const key = createDirectoryCacheKey(scope, folderId);
-  const record = await readCacheRecordMeta(key);
+  const keys = createDirectoryCacheKeys(scope, fallbackScopes, folderId);
 
-  if (!record?.directoryStorageKey) {
-    return undefined;
+  for (const key of keys) {
+    const record = await readCacheRecordMeta(key);
+
+    if (!record?.directoryStorageKey) {
+      continue;
+    }
+
+    const directory = parseJson<FolderDirectory>(await AsyncStorage.getItem(record.directoryStorageKey));
+
+    if (!directory) {
+      await deleteMobileLocalCacheRecord(key);
+      continue;
+    }
+
+    return directory;
   }
 
-  const directory = parseJson<FolderDirectory>(await AsyncStorage.getItem(record.directoryStorageKey));
-
-  if (!directory) {
-    await deleteMobileLocalCacheRecord(key);
-    return undefined;
-  }
-
-  return directory;
+  return undefined;
 };
 
 /**
@@ -258,18 +344,22 @@ export const writeCachedMobileDirectory = async ({
 export const readCachedMobileMediaUri = async (
   params: ReadCachedMobileMediaParams,
 ): Promise<string | undefined> => {
-  const key = createMediaCacheKey(params);
-  const record = await readCacheRecordMeta(key);
+  const keys = createMediaCacheKeys(params);
 
-  if (!record?.fileUri) {
-    return undefined;
+  for (const key of keys) {
+    const record = await readCacheRecordMeta(key);
+
+    if (!record?.fileUri) {
+      continue;
+    }
+
+    if (doesFileExist(record.fileUri)) {
+      return record.fileUri;
+    }
+
+    await deleteMobileLocalCacheRecord(key);
   }
 
-  if (doesFileExist(record.fileUri)) {
-    return record.fileUri;
-  }
-
-  await deleteMobileLocalCacheRecord(key);
   return undefined;
 };
 
@@ -342,6 +432,13 @@ export const readMobileCacheStats = async (scope?: string): Promise<MobileCacheS
   stats.totalCount = stats.usefulCount + stats.unusedCount;
   stats.totalSize = stats.usefulSize + stats.unusedSize;
   stats.approximateSize = stats.totalSize;
+  stats.appDataSize = Math.max(
+    0,
+    payloadSnapshot.nativeStorageStats.appDataSize + stats.totalSize - payloadSnapshot.nativeStorageStats.clearableSize,
+  );
+  stats.applicationSupportSize = payloadSnapshot.nativeStorageStats.applicationSupportSize;
+  stats.documentSize = payloadSnapshot.nativeStorageStats.documentSize;
+  stats.nativeTemporarySize = payloadSnapshot.nativeStorageStats.clearableSize;
 
   return stats;
 };
@@ -393,9 +490,10 @@ export const deleteMobileCacheFolderGroups = async (folderScopeKeys: string[]): 
   cacheInvalidationRevision += 1;
 
   await enqueueCacheIndexMutation(async () => {
-    const records = await readCacheRecordMetasRaw();
-    const recordsToDelete = records.filter((record) => targetKeys.has(record.folderScopeKey));
-    const recordsToKeep = records.filter((record) => !targetKeys.has(record.folderScopeKey));
+    const cacheIndex = await readCacheIndexStateRaw();
+    const recordsToDelete = Array.from(targetKeys)
+      .flatMap((folderScopeKey) => cacheIndex.recordsByFolderScopeKey.get(folderScopeKey) ?? []);
+    const recordsToKeep = cacheIndex.records.filter((record) => !targetKeys.has(record.folderScopeKey));
 
     await Promise.all(recordsToDelete.map(deleteCachePayload));
     await writeCacheRecordMetasRaw(recordsToKeep);
@@ -443,7 +541,7 @@ export const clearUsefulMobileLocalCache = async (): Promise<void> => {
 };
 
 /**
- * Clears payloads that are no longer reachable from the cache index.
+ * Clears payloads that are no longer reachable from the cache index plus native temporary caches.
  */
 export const clearUnusedMobileLocalCache = async (): Promise<void> => {
   invalidateMobileCacheRequests();
@@ -457,13 +555,14 @@ export const clearUnusedMobileLocalCache = async (): Promise<void> => {
       clearUnusedMobileCacheDataKeys(payloadSnapshot.referencedDataKeys),
       deleteUnusedMobileCacheFiles(payloadSnapshot.referencedFileUris),
     ]);
+    await deleteExternalMobileTemporaryCaches({ preserveExpoCache: true });
 
     if (staleRecordKeys.size > 0) {
       await writeCacheRecordMetasRaw(records.filter((record) => !staleRecordKeys.has(record.key)));
     }
   });
 
-  notifyMobileCacheChanged({ reason: 'clear-all' });
+  notifyMobileCacheChanged({ reason: 'clear-unused' });
 };
 
 /**
@@ -481,6 +580,7 @@ export const clearAllMobileLocalCache = async (): Promise<void> => {
   });
 
   await clearLegacyDirectoryCache();
+  await deleteExternalMobileTemporaryCaches({ preserveExpoCache: false });
   deleteMobileCacheDirectory();
   notifyMobileCacheChanged({ reason: 'clear-all' });
 };
@@ -552,10 +652,14 @@ const downloadAndWriteMediaCache = async (
 
 const createEmptyCacheStats = (): MobileCacheStats => ({
   approximateSize: 0,
+  appDataSize: 0,
+  applicationSupportSize: 0,
   coverCount: 0,
   directoryCount: 0,
+  documentSize: 0,
   hdThumbnailCount: 0,
   mediaCount: 0,
+  nativeTemporarySize: 0,
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
@@ -588,22 +692,68 @@ const createEmptyCacheFolderSummary = (record: MobileLocalCacheRecordMeta): Mobi
 });
 
 const readCacheRecordMeta = async (key: string): Promise<MobileLocalCacheRecordMeta | undefined> => {
-  return (await readCacheRecordMetas()).find((record) => record.key === key);
+  return (await readCacheIndexState()).recordByKey.get(key);
 };
 
 const readCacheRecordMetas = async (): Promise<MobileLocalCacheRecordMeta[]> => {
+  return (await readCacheIndexState()).records;
+};
+
+/**
+ * Reads the current index after pending writes, then serves key lookups from memory.
+ */
+const readCacheIndexState = async (): Promise<MobileCacheIndexState> => {
   await cacheIndexMutationQueue.catch(() => undefined);
 
-  return readCacheRecordMetasRaw();
+  return readCacheIndexStateRaw();
+};
+
+/**
+ * Loads the AsyncStorage index only once per process and reuses the parsed maps.
+ */
+const readCacheIndexStateRaw = (): Promise<MobileCacheIndexState> => {
+  if (!cacheIndexStatePromise) {
+    cacheIndexStatePromise = AsyncStorage.getItem(MOBILE_CACHE_INDEX_KEY)
+      .then((value) => createCacheIndexState(parseJson<MobileLocalCacheRecordMeta[]>(value) ?? []))
+      .catch(() => createCacheIndexState([]));
+  }
+
+  return cacheIndexStatePromise;
 };
 
 const readCacheRecordMetasRaw = async (): Promise<MobileLocalCacheRecordMeta[]> => {
-  return parseJson<MobileLocalCacheRecordMeta[]>(await AsyncStorage.getItem(MOBILE_CACHE_INDEX_KEY)) ?? [];
+  return (await readCacheIndexStateRaw()).records;
 };
 
 const writeCacheRecordMetasRaw = async (records: MobileLocalCacheRecordMeta[]): Promise<void> => {
-  await AsyncStorage.setItem(MOBILE_CACHE_INDEX_KEY, JSON.stringify(records));
+  const nextState = createCacheIndexState(records);
+
+  await AsyncStorage.setItem(MOBILE_CACHE_INDEX_KEY, JSON.stringify(nextState.records));
+  cacheIndexStatePromise = Promise.resolve(nextState);
   notifyMobileCacheChanged();
+};
+
+/**
+ * Builds lookup maps from the serialized cache index without changing record order.
+ */
+const createCacheIndexState = (records: MobileLocalCacheRecordMeta[]): MobileCacheIndexState => {
+  const recordByKey = new Map<string, MobileLocalCacheRecordMeta>();
+  const recordsByFolderScopeKey = new Map<string, MobileLocalCacheRecordMeta[]>();
+
+  records.forEach((record) => {
+    recordByKey.set(record.key, record);
+
+    const folderRecords = recordsByFolderScopeKey.get(record.folderScopeKey) ?? [];
+
+    folderRecords.push(record);
+    recordsByFolderScopeKey.set(record.folderScopeKey, folderRecords);
+  });
+
+  return {
+    recordByKey,
+    records,
+    recordsByFolderScopeKey,
+  };
 };
 
 const inspectMobileCachePayloads = async (
@@ -641,20 +791,22 @@ const inspectMobileCachePayloads = async (
     }
   }
 
-  const [unusedDataStats, unusedFileStats] = await Promise.all([
+  const [unusedDataStats, unusedFileStats, externalTemporaryStats] = await Promise.all([
     readUnusedMobileCacheDataStats(referencedDataKeys),
     readUnusedMobileCacheFileStats(referencedFileUris, referencedFileSizeByUri),
+    readExternalMobileTemporaryCacheStats(),
   ]);
 
   return {
+    nativeStorageStats: externalTemporaryStats.nativeStorageStats,
     referencedFileSizeByUri,
     referencedDataKeys,
     referencedFileUris,
     staleRecordKeys,
     usefulRecords,
     usefulSizeByKey,
-    unusedCount: staleRecordKeys.size + unusedDataStats.count + unusedFileStats.count,
-    unusedSize: staleRecordMetaSize + unusedDataStats.size + unusedFileStats.size,
+    unusedCount: staleRecordKeys.size + unusedDataStats.count + unusedFileStats.count + externalTemporaryStats.count,
+    unusedSize: staleRecordMetaSize + unusedDataStats.size + unusedFileStats.size + externalTemporaryStats.size,
   };
 };
 
@@ -714,13 +866,13 @@ const invalidateMobileCacheRequests = (): void => {
 
 const upsertCacheRecordMeta = async (record: MobileLocalCacheRecordMeta): Promise<void> => {
   await enqueueCacheIndexMutation(async () => {
-    const records = await readCacheRecordMetasRaw();
-    const previousRecord = records.find((item) => item.key === record.key);
+    const cacheIndex = await readCacheIndexStateRaw();
+    const previousRecord = cacheIndex.recordByKey.get(record.key);
     const nextRecord = previousRecord
       ? { ...record, createdAt: previousRecord.createdAt }
       : record;
     const nextRecords = [
-      ...records.filter((item) => item.key !== record.key),
+      ...cacheIndex.records.filter((item) => item.key !== record.key),
       nextRecord,
     ];
 
@@ -730,14 +882,14 @@ const upsertCacheRecordMeta = async (record: MobileLocalCacheRecordMeta): Promis
 
 const deleteMobileLocalCacheRecord = async (key: string): Promise<void> => {
   await enqueueCacheIndexMutation(async () => {
-    const records = await readCacheRecordMetasRaw();
-    const record = records.find((item) => item.key === key);
+    const cacheIndex = await readCacheIndexStateRaw();
+    const record = cacheIndex.recordByKey.get(key);
 
     if (record) {
       await deleteCachePayload(record);
     }
 
-    await writeCacheRecordMetasRaw(records.filter((item) => item.key !== key));
+    await writeCacheRecordMetasRaw(cacheIndex.records.filter((item) => item.key !== key));
   });
 };
 
@@ -853,6 +1005,100 @@ const deleteUnusedMobileCacheFiles = (referencedFileUris: Set<string>): void => 
   });
 };
 
+/**
+ * Reads system-level temporary caches that live beside the app-owned KW Photo cache directory.
+ */
+const readExternalMobileTemporaryCacheStats = async (): Promise<ExternalTemporaryCacheStats> => {
+  const [nativeStorageStats, expoTemporaryStats] = await Promise.all([
+    readNativeMobileStorageStats(),
+    Promise.resolve(sumCacheTreeStats(listExternalMobileTemporaryCacheEntries().map(readCacheTreeStats))),
+  ]);
+
+  return {
+    count: expoTemporaryStats.count + nativeStorageStats.clearableCount,
+    nativeStorageStats,
+    size: expoTemporaryStats.size + nativeStorageStats.clearableSize,
+  };
+};
+
+/**
+ * Clears platform/network/image temporary caches without touching indexed KW Photo media files.
+ */
+const deleteExternalMobileTemporaryCaches = async ({
+  preserveExpoCache,
+}: {
+  preserveExpoCache: boolean;
+}): Promise<void> => {
+  listExternalMobileTemporaryCacheEntries().forEach(deleteCacheEntry);
+  await clearNativeMobileTemporaryStorage(preserveExpoCache);
+};
+
+const listExternalMobileTemporaryCacheEntries = (): (Directory | File)[] => {
+  try {
+    if (!Paths.cache.exists) {
+      return [];
+    }
+
+    return Paths.cache.list().filter((entry) => entry.name !== MOBILE_CACHE_DIRECTORY_NAME);
+  } catch {
+    return [];
+  }
+};
+
+const readNativeMobileStorageStats = async (): Promise<NativeMobileStorageStats> => {
+  if (Platform.OS !== 'ios' || !nativeMobileStorage?.getTemporaryStorageStats) {
+    return EMPTY_NATIVE_STORAGE_STATS;
+  }
+
+  try {
+    const stats = await nativeMobileStorage.getTemporaryStorageStats(createNativeMobileStorageOptions(true));
+
+    return normalizeNativeMobileStorageStats(stats);
+  } catch {
+    return EMPTY_NATIVE_STORAGE_STATS;
+  }
+};
+
+const clearNativeMobileTemporaryStorage = async (preserveExpoCache: boolean): Promise<void> => {
+  if (Platform.OS !== 'ios' || !nativeMobileStorage?.clearTemporaryStorage) {
+    return;
+  }
+
+  try {
+    await nativeMobileStorage.clearTemporaryStorage(createNativeMobileStorageOptions(preserveExpoCache));
+  } catch {
+    // The JS cache cleanup already finished; native cache directories can be locked by the OS.
+  }
+};
+
+const createNativeMobileStorageOptions = (preserveExpoCache: boolean): NativeMobileStorageOptions => {
+  const expoCacheUri = preserveExpoCache ? readExpoCacheRootUri() : undefined;
+
+  return {
+    excludedUris: expoCacheUri ? [expoCacheUri] : [],
+  };
+};
+
+const readExpoCacheRootUri = (): string | undefined => {
+  try {
+    return Paths.cache.uri;
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeNativeMobileStorageStats = (
+  stats?: Partial<NativeMobileStorageStats>,
+): NativeMobileStorageStats => ({
+  appDataSize: normalizeCacheSize(stats?.appDataSize),
+  applicationSupportSize: normalizeCacheSize(stats?.applicationSupportSize),
+  cacheSize: normalizeCacheSize(stats?.cacheSize),
+  clearableCount: normalizeCacheSize(stats?.clearableCount),
+  clearableSize: normalizeCacheSize(stats?.clearableSize),
+  documentSize: normalizeCacheSize(stats?.documentSize),
+  temporarySize: normalizeCacheSize(stats?.temporarySize),
+});
+
 const listMobileCacheFiles = (): File[] => {
   try {
     const directory = new Directory(Paths.cache, MOBILE_CACHE_DIRECTORY_NAME);
@@ -879,6 +1125,44 @@ const listDirectoryFiles = (directory: Directory): File[] => {
   } catch {
     return [];
   }
+};
+
+const readCacheTreeStats = (entry: Directory | File): CacheTreeStats => {
+  if (entry instanceof File) {
+    const size = getFileSize(entry);
+
+    return {
+      count: size > 0 || entry.exists ? 1 : 0,
+      size,
+    };
+  }
+
+  try {
+    const childStats = sumCacheTreeStats(entry.list().map(readCacheTreeStats));
+    const directorySize = getDirectorySize(entry);
+
+    return {
+      count: childStats.count > 0 ? childStats.count : directorySize > 0 ? 1 : 0,
+      size: Math.max(childStats.size, directorySize),
+    };
+  } catch {
+    const size = getDirectorySize(entry);
+
+    return {
+      count: size > 0 || entry.exists ? 1 : 0,
+      size,
+    };
+  }
+};
+
+const sumCacheTreeStats = (items: CacheTreeStats[]): CacheTreeStats => {
+  return items.reduce(
+    (summary, item) => ({
+      count: summary.count + item.count,
+      size: summary.size + item.size,
+    }),
+    { count: 0, size: 0 },
+  );
 };
 
 /**
@@ -951,6 +1235,16 @@ const deleteMobileCacheDirectory = (): void => {
   }
 };
 
+const deleteCacheEntry = (entry: Directory | File): void => {
+  try {
+    if (entry.exists) {
+      entry.delete();
+    }
+  } catch {
+    // Platform temporary caches can be recreated or locked by native image/video loaders.
+  }
+};
+
 const doesFileExist = (uri: string): boolean => {
   try {
     return new File(uri).exists;
@@ -998,6 +1292,18 @@ const createDirectoryCacheKey = (scope: string, folderId?: number): string => {
   return `${scope}::directory::${folderId && folderId > 0 ? folderId : 'root'}`;
 };
 
+/**
+ * Orders the current cache scope before legacy single-address scopes.
+ */
+const createDirectoryCacheKeys = (
+  scope: string,
+  fallbackScopes: string[] | undefined,
+  folderId?: number,
+): string[] => {
+  return createScopeCandidates(scope, fallbackScopes)
+    .map((candidateScope) => createDirectoryCacheKey(candidateScope, folderId));
+};
+
 const createMediaCacheKey = ({
   fileId,
   folder,
@@ -1005,10 +1311,22 @@ const createMediaCacheKey = ({
   md5,
   url,
   variant = 'default',
-}: ReadCachedMobileMediaParams): string => {
+}: ReadCachedMobileMediaParams, scope = folder.scope): string => {
   const identity = createMediaCacheIdentity({ fileId, md5, url });
 
-  return `${folder.scope}::media::${folder.folderKey}::${kind}::${variant}::${identity}`;
+  return `${scope}::media::${folder.folderKey}::${kind}::${variant}::${identity}`;
+};
+
+/**
+ * Orders the current media cache key before compatible legacy address keys.
+ */
+const createMediaCacheKeys = (params: ReadCachedMobileMediaParams): string[] => {
+  return createScopeCandidates(params.folder.scope, params.folder.fallbackScopes)
+    .map((scope) => createMediaCacheKey(params, scope));
+};
+
+const createScopeCandidates = (scope: string, fallbackScopes: string[] | undefined): string[] => {
+  return uniqueStrings([scope, ...(fallbackScopes ?? [])]);
 };
 
 /**
@@ -1131,6 +1449,14 @@ const hashString = (value: string): string => {
   }
 
   return hash.toString(36);
+};
+
+const normalizeServerUrls = (serverUrls: Array<string | undefined>): string[] => {
+  return uniqueStrings(
+    serverUrls
+      .map((serverUrl) => typeof serverUrl === 'string' ? normalizeServerUrl(serverUrl) : '')
+      .filter(Boolean),
+  );
 };
 
 const normalizeServerUrl = (serverUrl: string): string => {

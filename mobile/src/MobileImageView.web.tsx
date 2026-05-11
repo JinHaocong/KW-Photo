@@ -16,6 +16,8 @@ interface MobileImageViewProps {
   images: WebImageSource[];
   keyExtractor?: (imageSrc: WebImageSource, index: number) => string;
   onImageIndexChange?: (imageIndex: number) => void;
+  onImageSourceCommit?: (imageIndex: number, imageSrc: WebImageSource) => void;
+  onImageSourceError?: (imageIndex: number, imageSrc: WebImageSource) => void;
   onLongPress?: (image: WebImageSource) => void;
   onRequestClose: () => void;
   onSwipeStart?: () => void;
@@ -35,6 +37,8 @@ const MobileImageView = ({
   HeaderComponent,
   imageIndex,
   images,
+  onImageSourceCommit,
+  onImageSourceError,
   onRequestClose,
   shouldRenderImageItem,
   visible,
@@ -56,7 +60,13 @@ const MobileImageView = ({
       {HeaderComponent ? <HeaderComponent imageIndex={imageIndex} /> : null}
       <Pressable onPress={onRequestClose} style={styles.imageFrame}>
         {currentImage && renderImageItem ? (
-          <Image resizeMode="contain" source={currentImage} style={styles.image} />
+          <Image
+            onError={() => onImageSourceError?.(imageIndex, currentImage)}
+            onLoad={() => onImageSourceCommit?.(imageIndex, currentImage)}
+            resizeMode="contain"
+            source={currentImage}
+            style={styles.image}
+          />
         ) : null}
       </Pressable>
       {FooterComponent ? <FooterComponent imageIndex={imageIndex} /> : null}

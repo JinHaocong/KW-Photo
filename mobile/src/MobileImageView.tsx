@@ -17,6 +17,8 @@ interface MobileImageViewProps {
   ItemOverlayComponent?: ComponentType<{ imageIndex: number }>;
   keyExtractor?: (imageSrc: ImageViewSource, index: number) => string;
   onImageIndexChange?: (imageIndex: number) => void;
+  onImageSourceCommit?: (imageIndex: number, imageSrc: ImageViewSource) => void;
+  onImageSourceError?: (imageIndex: number, imageSrc: ImageViewSource) => void;
   onLongPress?: (image: ImageViewSource) => void;
   onRequestClose: () => void;
   onSwipeStart?: () => void;
@@ -38,6 +40,8 @@ const MobileImageView = ({
   imageIndex,
   images,
   ItemOverlayComponent,
+  onImageSourceCommit,
+  onImageSourceError,
   onRequestClose,
   OverlayComponent,
   shouldRenderImageItem,
@@ -60,7 +64,13 @@ const MobileImageView = ({
       {HeaderComponent ? <HeaderComponent imageIndex={imageIndex} /> : null}
       <Pressable onPress={onRequestClose} style={styles.imageFrame}>
         {currentImage && renderImageItem ? (
-          <Image resizeMode="contain" source={currentImage} style={styles.image} />
+          <Image
+            onError={() => onImageSourceError?.(imageIndex, currentImage)}
+            onLoad={() => onImageSourceCommit?.(imageIndex, currentImage)}
+            resizeMode="contain"
+            source={currentImage}
+            style={styles.image}
+          />
         ) : null}
       </Pressable>
       {OverlayComponent ? (

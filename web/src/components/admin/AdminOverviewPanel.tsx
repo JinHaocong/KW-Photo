@@ -5,7 +5,6 @@ import {
   formatCacheSize,
   readLocalCacheStats,
   readLocalCacheStorageInfo,
-  subscribeLocalCacheChanges,
 } from '../../shared/local-cache';
 import type { LocalCacheStats, LocalCacheStorageInfo } from '../../shared/local-cache';
 import type { ApiInfo, AuthTokens, CurrentUser, UploadTask } from '../../shared/types';
@@ -55,18 +54,23 @@ export const AdminOverviewPanel = ({
   const [storageInfo, setStorageInfo] = useState<LocalCacheStorageInfo>();
   const uploadStats = useMemo(() => getUploadTaskStats(uploadTasks), [uploadTasks]);
 
-  const refreshCacheSummary = useCallback(async (): Promise<void> => {
-    setCacheStats(await readLocalCacheStats().catch(() => EMPTY_CACHE_STATS));
+  const refreshCacheBackend = useCallback(async (): Promise<void> => {
     setStorageInfo(await readLocalCacheStorageInfo());
   }, []);
 
-  useEffect(() => {
-    void refreshCacheSummary();
+  const refreshCacheSummary = useCallback(async (): Promise<void> => {
+    const [nextStats, nextStorageInfo] = await Promise.all([
+      readLocalCacheStats().catch(() => EMPTY_CACHE_STATS),
+      readLocalCacheStorageInfo(),
+    ]);
 
-    return subscribeLocalCacheChanges(() => {
-      void refreshCacheSummary();
-    });
-  }, [refreshCacheSummary]);
+    setCacheStats(nextStats);
+    setStorageInfo(nextStorageInfo);
+  }, []);
+
+  useEffect(() => {
+    void refreshCacheBackend();
+  }, [refreshCacheBackend]);
 
   return (
     <div className="admin-panel">

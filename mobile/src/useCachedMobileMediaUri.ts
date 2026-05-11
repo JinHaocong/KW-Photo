@@ -250,16 +250,26 @@ const shouldInvalidateCachedMobileMediaUri = (
   }
 
   if (detail.reason === 'clear-scope') {
-    return !detail.scope || detail.scope === folder.scope;
+    return !detail.scope || createMobileFolderScopeCandidates(folder).includes(detail.scope);
   }
 
   if (detail.reason === 'delete-folder') {
-    return Boolean(detail.folderScopeKeys?.includes(createMobileFolderScopeKey(folder)));
+    const folderScopeKeys = createMobileFolderScopeCandidates(folder)
+      .map((scope) => createMobileFolderScopeKey(folder, scope));
+
+    return folderScopeKeys.some((folderScopeKey) => detail.folderScopeKeys?.includes(folderScopeKey));
   }
 
   return false;
 };
 
-const createMobileFolderScopeKey = (folder: MobileLocalCacheFolderRef): string => {
-  return `${folder.scope}::folder::${folder.folderKey}`;
+const createMobileFolderScopeKey = (
+  folder: MobileLocalCacheFolderRef,
+  scope = folder.scope,
+): string => {
+  return `${scope}::folder::${folder.folderKey}`;
+};
+
+const createMobileFolderScopeCandidates = (folder: MobileLocalCacheFolderRef): string[] => {
+  return Array.from(new Set([folder.scope, ...(folder.fallbackScopes ?? [])]));
 };

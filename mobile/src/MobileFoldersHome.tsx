@@ -82,14 +82,17 @@ import type {
   MobileFolderSortDirection,
   MobileFolderSortField,
   MobileFolderViewMode,
+  MobilePreferences,
 } from "./mobile-storage";
 import {
   mergeMobilePreferences,
+  normalizeMobileServerAddressList,
   readMobilePreferences,
 } from "./mobile-storage";
 import {
   cacheMobileMediaResourceFromUrl,
   createMobileLocalCacheFolderRef,
+  createMobileLocalCacheFallbackScopes,
   createMobileLocalCacheScope,
   readCachedMobileDirectory,
   readCachedMobileMediaUri,
@@ -217,6 +220,48 @@ interface MobileFoldersHomeProps {
   rootRequestVersion?: number;
   session: MobileFoldersSession;
 }
+
+interface MobileCacheScopeOptions {
+  serverAliases: string[];
+  serverUrl: string;
+  userId?: number | string;
+  username?: string;
+}
+
+interface PreviewOriginalTransition {
+  fileKey: string;
+  token: number;
+  uri: string;
+}
+
+/**
+ * Collects saved server addresses so old address-scoped cache records stay readable.
+ */
+const getMobileLegacyCacheServerAliases = (
+  preferences: MobilePreferences,
+  activeServerUrl: string,
+): string[] => {
+  return normalizeMobileServerAddressList([
+    preferences.primaryServerUrl,
+    preferences.backupServerUrl,
+    preferences.serverUrl,
+    activeServerUrl,
+    ...(preferences.serverAddressHistory ?? []),
+  ]);
+};
+
+/**
+ * Builds the cache scope input shared by folder restore and mounted directory screens.
+ */
+const createMobileCacheScopeOptions = (
+  session: MobileFoldersSession,
+  serverAliases: string[],
+): MobileCacheScopeOptions => ({
+  serverAliases,
+  serverUrl: session.serverUrl,
+  userId: session.user.id,
+  username: session.user.username,
+});
 
 type MobileFolderStackParamList = {
   directory: {
@@ -362,14 +407,17 @@ export const MobileFoldersHome = ({
         typeof preferences.currentFolderId === "number"
           ? preferences.currentFolderId
           : undefined;
-      const cacheScope = createMobileLocalCacheScope({
-        serverUrl: session.serverUrl,
-        userId: session.user.id,
-        username: session.user.username,
-      });
+      const cacheScopeOptions = createMobileCacheScopeOptions(
+        session,
+        getMobileLegacyCacheServerAliases(preferences, session.serverUrl),
+      );
+      const cacheScope = createMobileLocalCacheScope(cacheScopeOptions);
+      const cacheFallbackScopes =
+        createMobileLocalCacheFallbackScopes(cacheScopeOptions);
       const cachedDirectory =
         preferences.localCacheEnabled ?? true
           ? await readCachedMobileDirectory({
+              fallbackScopes: cacheFallbackScopes,
               folderId: nextInitialFolderId,
               scope: cacheScope,
             })
@@ -390,7 +438,7 @@ export const MobileFoldersHome = ({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [session.serverUrl]);
 
   useEffect(() => {
     if (preferencesHydrated) {
@@ -487,6 +535,7 @@ const MobileFolderDirectoryScreen = ({
   const [folderDialogName, setFolderDialogName] = useState("");
   const [folderDialogTarget, setFolderDialogTarget] = useState<FolderSummary>();
   const [folderSubmitting, setFolderSubmitting] = useState(false);
+  const [cacheServerAliases, setCacheServerAliases] = useState<string[]>([]);
   const [coverDialogAutoSubmitting, setCoverDialogAutoSubmitting] =
     useState(false);
   const [coverDialogDirectory, setCoverDialogDirectory] =
@@ -566,6 +615,8 @@ const MobileFolderDirectoryScreen = ({
   const [previewFavoriteFileIds, setPreviewFavoriteFileIds] = useState<
     number[]
   >([]);
+  const [previewOriginalTransition, setPreviewOriginalTransition] =
+    useState<PreviewOriginalTransition>();
   const [previewWarmThumbnailUris, setPreviewWarmThumbnailUris] = useState<
     Record<string, string>
   >({});
@@ -595,31 +646,41 @@ const MobileFolderDirectoryScreen = ({
     tokens: session.tokens,
   });
   const { tokensRef } = apiOptions;
+  const cacheScopeOptions = useMemo(
+    () => createMobileCacheScopeOptions(session, cacheServerAliases),
+    [
+      cacheServerAliases,
+      session.serverUrl,
+      session.user.id,
+      session.user.username,
+    ],
+  );
   const cacheScope = useMemo(
-    () =>
-      createMobileLocalCacheScope({
-        serverUrl: session.serverUrl,
-        userId: session.user.id,
-        username: session.user.username,
-      }),
-    [session.serverUrl, session.user.id, session.user.username],
+    () => createMobileLocalCacheScope(cacheScopeOptions),
+    [cacheScopeOptions],
+  );
+  const cacheFallbackScopes = useMemo(
+    () => createMobileLocalCacheFallbackScopes(cacheScopeOptions),
+    [cacheScopeOptions],
   );
   const cacheFolder = useMemo(
     () =>
       createMobileLocalCacheFolderRef({
         directory,
+        fallbackScopes: cacheFallbackScopes,
         folderId: currentFolderId,
         scope: cacheScope,
       }),
-    [cacheScope, currentFolderId, directory],
+    [cacheFallbackScopes, cacheScope, currentFolderId, directory],
   );
   const coverDialogCacheFolder = useMemo(
     () =>
       createMobileLocalCacheFolderRef({
         directory: coverDialogDirectory,
+        fallbackScopes: cacheFallbackScopes,
         scope: cacheScope,
       }),
-    [cacheScope, coverDialogDirectory],
+    [cacheFallbackScopes, cacheScope, coverDialogDirectory],
   );
   const folderCardLayoutStyle = useMemo(
     () =>
@@ -709,6 +770,9 @@ const MobileFolderDirectoryScreen = ({
         return;
       }
 
+      setCacheServerAliases(
+        getMobileLegacyCacheServerAliases(preferences, session.serverUrl),
+      );
       setFolderCardSize(preferences.folderCardSize ?? DEFAULT_CARD_SIZE);
       setCacheEnabled(preferences.localCacheEnabled ?? true);
       setShowFolderCovers(preferences.showFolderCovers ?? true);
@@ -725,7 +789,7 @@ const MobileFolderDirectoryScreen = ({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [session.serverUrl]);
 
   /**
    * Ensures image endpoints have a media auth_code for thumbnails and previews.
@@ -783,7 +847,11 @@ const MobileFolderDirectoryScreen = ({
       setMessage("");
       const cachedDirectory =
         cacheEnabled && mode === "loading"
-          ? await readCachedMobileDirectory({ folderId, scope: cacheScope })
+          ? await readCachedMobileDirectory({
+              fallbackScopes: cacheFallbackScopes,
+              folderId,
+              scope: cacheScope,
+            })
           : undefined;
 
       if (cachedDirectory) {
@@ -802,6 +870,7 @@ const MobileFolderDirectoryScreen = ({
             directory: nextDirectory,
             folder: createMobileLocalCacheFolderRef({
               directory: nextDirectory,
+              fallbackScopes: cacheFallbackScopes,
               folderId,
               scope: cacheScope,
             }),
@@ -818,7 +887,7 @@ const MobileFolderDirectoryScreen = ({
         setRefreshing(false);
       }
     },
-    [apiOptions, cacheEnabled, cacheScope, currentFolderId],
+    [apiOptions, cacheEnabled, cacheFallbackScopes, cacheScope, currentFolderId],
   );
 
   /**
@@ -1130,6 +1199,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewDisplayedImageUriState(undefined);
     setPreviewHdLoadedUri(undefined);
     setPreviewMoreOpen(false);
+    setPreviewOriginalTransition(undefined);
     setPreviewPendingImageSource(undefined);
   }, [previewFile?.id, previewFile?.md5]);
 
@@ -1247,6 +1317,7 @@ const MobileFolderDirectoryScreen = ({
     if (
       !previewIsImage ||
       previewAutoOriginalSessionRef.current === autoOriginalSession ||
+      previewDisplayedImageSource !== "hd" ||
       !previewOriginalImageCache.cacheHit ||
       !previewOriginalImageCache.displayUri
     ) {
@@ -1254,15 +1325,14 @@ const MobileFolderDirectoryScreen = ({
     }
 
     previewAutoOriginalSessionRef.current = autoOriginalSession;
-    previewImageLoadRequestRef.current += 1;
-    setPreviewMode("original");
-    setPreviewDisplayedImageSource("original");
-    setPreviewDisplayedImageUriState({
+    setPreviewOriginalTransition({
       fileKey: previewFileKey,
+      token: Date.now(),
       uri: previewOriginalImageCache.displayUri,
     });
-    setPreviewPendingImageSource(undefined);
+    setPreviewPendingImageSource("original");
   }, [
+    previewDisplayedImageSource,
     previewFileKey,
     previewIsImage,
     previewOpenNonce,
@@ -1337,7 +1407,13 @@ const MobileFolderDirectoryScreen = ({
     previewVideoPosterUriState.fileKey === previewFileKey
       ? previewVideoPosterUriState.uri
       : undefined;
+  const previewOriginalTargetUri =
+    previewOriginalTransition &&
+    previewOriginalTransition.fileKey === previewFileKey
+      ? previewOriginalTransition.uri
+      : undefined;
   const previewImageActiveUri =
+    previewOriginalTargetUri ??
     previewDisplayedImageUri ??
     previewDefaultImageCache.displayUri ??
     previewListThumbnailCache.displayUri;
@@ -1353,12 +1429,12 @@ const MobileFolderDirectoryScreen = ({
     () =>
       previewImageGalleryItems.map((item) => {
         const mediaKey = createPreviewMediaKey(item.file);
+        const itemFileKey = createFileSelectionKey(item.file);
 
         return {
           uri:
             previewFile &&
-            createFileSelectionKey(item.file) ===
-              createFileSelectionKey(previewFile)
+            itemFileKey === createFileSelectionKey(previewFile)
               ? (previewCurrentMediaActiveUri ??
                 previewWarmThumbnailUris[mediaKey] ??
                 item.uri)
@@ -1872,6 +1948,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewInfoVisible(false);
     setPreviewMode(isPreviewVideo ? "original" : "thumbnail");
     setPreviewMoreOpen(false);
+    setPreviewOriginalTransition(undefined);
     setPreviewDisplayedImageSource("thumbnail");
     setPreviewDisplayedImageUriState(undefined);
     setPreviewPendingImageSource(undefined);
@@ -1917,6 +1994,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewInfoVisible(false);
     setPreviewMode("thumbnail");
     setPreviewMoreOpen(false);
+    setPreviewOriginalTransition(undefined);
     setPreviewPendingImageSource(undefined);
     setPreviewDetailError("");
     setPreviewNotice("");
@@ -2416,6 +2494,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewOpenNonce((current) => current + 1);
     setPreviewImageViewerStartIndex(Math.max(nextImageViewerIndex, 0));
     setPreviewDetailError("");
+    setPreviewOriginalTransition(undefined);
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
     nativePreviewVideoPreloadRequestRef.current += 1;
@@ -2455,6 +2534,7 @@ const MobileFolderDirectoryScreen = ({
     setPreviewPendingImageSource(undefined);
     setPreviewOpenNonce((current) => current + 1);
     setPreviewDetailError("");
+    setPreviewOriginalTransition(undefined);
     setPreviewSettingsOpen(false);
     setVideoPreparing(false);
     nativePreviewVideoPreloadRequestRef.current += 1;
@@ -2498,6 +2578,7 @@ const MobileFolderDirectoryScreen = ({
           ? { fileKey: currentPreviewFileKey, uri: fallbackUri }
           : undefined,
       );
+      setPreviewOriginalTransition(undefined);
       setPreviewPendingImageSource(undefined);
       showPreviewNotice("已切回高清预览图");
       return;
@@ -2567,6 +2648,17 @@ const MobileFolderDirectoryScreen = ({
         }
 
         if (previewImageLoadRequestRef.current !== requestId) {
+          return;
+        }
+
+        if (previewUsesImageViewer) {
+          setPreviewOriginalTransition({
+            fileKey: currentPreviewFileKey,
+            token: Date.now(),
+            uri: nextOriginalUri,
+          });
+          setPreviewPendingImageSource("original");
+          showPreviewNotice("正在加载原图预览");
           return;
         }
 
@@ -3344,23 +3436,24 @@ const MobileFolderDirectoryScreen = ({
   ): Promise<void> => {
     const fileKey = createFileSelectionKey(file);
     const requestId = nativePreviewVideoLoadRequestRef.current + 1;
+    const cachedPlaybackSourceReady =
+      nativePreviewVideoPlaybackKey === fileKey &&
+      nativePreviewVideoSourceLabel === "缓存" &&
+      Boolean(nativePreviewVideoSourceUri);
 
     nativePreviewVideoLoadRequestRef.current = requestId;
     nativePreviewVideoAuthRetryKeyRef.current = undefined;
-    setNativePreviewVideoOpen(false);
     setNativePreviewVideoPosterUri(getVideoPosterUriForFile(file));
     setNativePreviewVideoPlaybackKey(fileKey);
+    setNativePreviewVideoOpen(true);
 
-    if (
-      nativePreviewVideoPlaybackKey === fileKey &&
-      nativePreviewVideoSourceLabel === "缓存" &&
-      nativePreviewVideoSourceUri
-    ) {
+    if (cachedPlaybackSourceReady) {
       setNativePreviewVideoRequestKey(undefined);
-      setNativePreviewVideoOpen(true);
       return;
     }
 
+    setNativePreviewVideoSourceLabel(undefined);
+    setNativePreviewVideoSourceUri(undefined);
     setNativePreviewVideoRequestKey(fileKey);
 
     let authCode: string | undefined;
@@ -3446,6 +3539,7 @@ const MobileFolderDirectoryScreen = ({
       }
 
       if (!transcodeReady) {
+        setNativePreviewVideoOpen(false);
         setNativePreviewVideoRequestKey(undefined);
         return;
       }
@@ -3508,6 +3602,63 @@ const MobileFolderDirectoryScreen = ({
     } catch {
       showPreviewNotice("打开 Infuse 失败，请稍后重试");
     }
+  };
+
+  /**
+   * Marks the source as original only after the zoomable image item commits it.
+   */
+  const handlePreviewImageSourceCommit = (
+    imageIndex: number,
+    imageSource: { uri?: string },
+  ): void => {
+    const transition = previewOriginalTransition;
+    const transitionFile = previewImageGalleryItems[imageIndex]?.file;
+
+    if (!transition || !previewFileKey || transition.fileKey !== previewFileKey) {
+      return;
+    }
+
+    if (
+      !transitionFile ||
+      createFileSelectionKey(transitionFile) !== transition.fileKey ||
+      imageSource.uri !== transition.uri
+    ) {
+      return;
+    }
+
+    previewImageLoadRequestRef.current += 1;
+    setPreviewMode("original");
+    setPreviewDisplayedImageSource("original");
+    setPreviewDisplayedImageUriState({
+      fileKey: transition.fileKey,
+      uri: transition.uri,
+    });
+    setPreviewPendingImageSource(undefined);
+    setPreviewOriginalTransition(undefined);
+  };
+
+  const handlePreviewImageSourceError = (
+    imageIndex: number,
+    imageSource: { uri?: string },
+  ): void => {
+    const transition = previewOriginalTransition;
+    const transitionFile = previewImageGalleryItems[imageIndex]?.file;
+
+    if (
+      !transition ||
+      !transitionFile ||
+      createFileSelectionKey(transitionFile) !== transition.fileKey ||
+      imageSource.uri !== transition.uri
+    ) {
+      return;
+    }
+
+    setPreviewOriginalTransition((current) =>
+      current?.token === transition.token ? undefined : current,
+    );
+    setPreviewPendingImageSource((current) =>
+      current === "original" ? undefined : current,
+    );
   };
 
   const renderImagePreviewFooter = (imageIndex: number) => {
@@ -3856,6 +4007,8 @@ const MobileFolderDirectoryScreen = ({
             return `${file?.id ?? imageIndex}-${file?.md5 ?? imageIndex}`;
           }}
           onImageIndexChange={handleImagePreviewIndexChange}
+          onImageSourceCommit={handlePreviewImageSourceCommit}
+          onImageSourceError={handlePreviewImageSourceError}
           onRequestClose={closePreview}
           onSwipeStart={closeNativePreviewVideoLayer}
           OverlayComponent={renderVideoPreviewOverlay}

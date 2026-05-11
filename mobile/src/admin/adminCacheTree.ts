@@ -26,10 +26,14 @@ export const createEmptyTaskCounts = (): AdminTaskCounts => ({
 
 export const createEmptyCacheStats = (): MobileCacheStats => ({
   approximateSize: 0,
+  appDataSize: 0,
+  applicationSupportSize: 0,
   coverCount: 0,
   directoryCount: 0,
+  documentSize: 0,
   hdThumbnailCount: 0,
   mediaCount: 0,
+  nativeTemporarySize: 0,
   originalImageCount: 0,
   originalVideoCount: 0,
   thumbnailCount: 0,
@@ -81,16 +85,28 @@ export const getCacheCompositionPills = (stats: MobileCacheStats): CacheMetaPill
 export const buildCacheFolderTree = (folders: MobileCacheFolderSummary[]): CacheFolderTreeNode[] => {
   const roots: CacheFolderTreeNode[] = [];
   const nodes = folders.map(createCacheFolderTreeNode);
+  const nodesByPath = new Map<string, CacheFolderTreeNode>();
+  const rootNodesByScope = new Map<string, CacheFolderTreeNode>();
 
   nodes.forEach((node) => {
-    const parentNode = findNearestCachedParentNode(node, nodes);
+    nodesByPath.set(createCacheTreePathKey(node.folder.scope, node.folder.folderPath), node);
 
-    if (parentNode) {
-      parentNode.children.push(node);
-    } else {
-      roots.push(node);
+    if (isRootCacheFolder(node.folder)) {
+      rootNodesByScope.set(node.folder.scope, node);
     }
   });
+
+  nodes
+    .sort((first, second) => getCachePathDepth(first.folder.folderPath) - getCachePathDepth(second.folder.folderPath))
+    .forEach((node) => {
+      const parentNode = findNearestCachedParentNode(node, nodesByPath, rootNodesByScope);
+
+      if (parentNode) {
+        parentNode.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
 
   hydrateCacheTreeNodes(roots, 0);
 
@@ -114,33 +130,23 @@ const createCacheFolderTreeNode = (folder: MobileCacheFolderSummary): CacheFolde
 
 const findNearestCachedParentNode = (
   node: CacheFolderTreeNode,
-  nodes: CacheFolderTreeNode[],
+  nodesByPath: Map<string, CacheFolderTreeNode>,
+  rootNodesByScope: Map<string, CacheFolderTreeNode>,
 ): CacheFolderTreeNode | undefined => {
-  const ancestors = nodes
-    .filter((candidate) => {
-      return (
-        candidate.id !== node.id &&
-        candidate.folder.scope === node.folder.scope &&
-        isCachePathAncestor(candidate.folder.folderPath, node.folder.folderPath)
-      );
-    })
-    .sort((first, second) => {
-      return getCachePathDepth(second.folder.folderPath) - getCachePathDepth(first.folder.folderPath);
-    });
+  const pathSegments = normalizeCacheTreePath(node.folder.folderPath).split('/').filter(Boolean);
 
-  if (ancestors[0]) {
-    return ancestors[0];
+  for (let length = pathSegments.length - 1; length > 0; length -= 1) {
+    const parentPath = pathSegments.slice(0, length).join('/');
+    const parentNode = nodesByPath.get(createCacheTreePathKey(node.folder.scope, parentPath));
+
+    if (parentNode && parentNode.id !== node.id) {
+      return parentNode;
+    }
   }
 
-  const rootNode = nodes.find((candidate) => {
-    return (
-      candidate.id !== node.id &&
-      candidate.folder.scope === node.folder.scope &&
-      isRootCacheFolder(candidate.folder)
-    );
-  });
+  const rootNode = rootNodesByScope.get(node.folder.scope);
 
-  return isRootCacheFolder(node.folder) ? undefined : rootNode;
+  return rootNode && rootNode.id !== node.id && !isRootCacheFolder(node.folder) ? rootNode : undefined;
 };
 
 const hydrateCacheTreeNodes = (nodes: CacheFolderTreeNode[], depth: number): CacheFolderTotals => {
@@ -196,17 +202,6 @@ export const collectCacheTreeFolders = (node: CacheFolderTreeNode): MobileCacheF
   ];
 };
 
-const isCachePathAncestor = (parentPath: string, childPath: string): boolean => {
-  const normalizedParentPath = normalizeCacheTreePath(parentPath);
-  const normalizedChildPath = normalizeCacheTreePath(childPath);
-
-  if (!normalizedParentPath || normalizedParentPath === normalizedChildPath) {
-    return false;
-  }
-
-  return normalizedChildPath.startsWith(`${normalizedParentPath}/`);
-};
-
 const isRootCacheFolder = (folder: MobileCacheFolderSummary): boolean => {
   return folder.folderKey === 'root' || normalizeCacheTreePath(folder.folderPath) === '根目录';
 };
@@ -217,4 +212,8 @@ const normalizeCacheTreePath = (path: string): string => {
 
 const getCachePathDepth = (path: string): number => {
   return normalizeCacheTreePath(path).split('/').filter(Boolean).length;
+};
+
+const createCacheTreePathKey = (scope: string, path: string): string => {
+  return `${scope}::${normalizeCacheTreePath(path)}`;
 };

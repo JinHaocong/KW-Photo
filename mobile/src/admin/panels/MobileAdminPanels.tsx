@@ -739,6 +739,9 @@ export const CachePanel = ({
           <CacheHeroStat label="总缓存" meta={`${stats.totalCount} 项资源`} value={formatFileSize(stats.totalSize)} />
           <CacheHeroStat label="可用缓存" meta="页面可直接命中" value={formatFileSize(stats.usefulSize)} />
           <CacheHeroStat label="残留缓存" meta={`${stats.unusedCount} 项残留`} value={formatFileSize(stats.unusedSize)} />
+          {stats.appDataSize > 0 ? (
+            <CacheHeroStat label="系统占用" meta="文稿与数据估算" value={formatFileSize(stats.appDataSize)} />
+          ) : null}
         </View>
 
         <View style={styles.cacheCompositionRow}>
@@ -771,7 +774,7 @@ export const CachePanel = ({
               icon="alert-circle-outline"
               label="清理残留"
               loading={actionLoading === 'clear-unused-cache'}
-              onPress={() => Alert.alert('清理残留缓存', '确定清理索引外文件、旧版本目录缓存和失效记录吗？可用缓存会保留。', [
+              onPress={() => Alert.alert('清理残留缓存', '确定清理索引外文件、旧版本目录缓存、失效记录和系统临时图片/网络缓存吗？可用业务缓存会保留。', [
                 { style: 'cancel', text: '取消' },
                 { onPress: () => void handleClearUnusedCache(), style: 'destructive', text: '清理残留' },
               ])}
@@ -781,7 +784,7 @@ export const CachePanel = ({
               icon="warning-outline"
               label="清理全部"
               loading={actionLoading === 'clear-all-mobile-cache'}
-              onPress={() => Alert.alert('清理全部缓存', '确定清理所有可用缓存和残留缓存，并删除本机缓存目录吗？', [
+              onPress={() => Alert.alert('清理全部缓存', '确定清理所有可用缓存、残留缓存、原生图片/网络缓存和临时目录吗？', [
                 { style: 'cancel', text: '取消' },
                 { onPress: () => void handleClearEveryCache(), style: 'destructive', text: '全部清理' },
               ])}
@@ -800,6 +803,9 @@ export const CachePanel = ({
         <CacheDetailStat icon="expand-outline" label="原图预览" meta="图片原图资源" value={String(stats.originalImageCount)} />
         <CacheDetailStat icon="videocam-outline" label="视频预览" meta="视频原始资源" value={String(stats.originalVideoCount)} />
         <CacheDetailStat icon="alert-circle-outline" label="残留缓存" meta="索引外/失效" value={String(stats.unusedCount)} />
+        {stats.nativeTemporarySize > 0 ? (
+          <CacheDetailStat icon="phone-portrait-outline" label="原生暂存" meta={formatFileSize(stats.nativeTemporarySize)} value="可清理" />
+        ) : null}
       </View>
 
       <View style={styles.cacheFolderSection}>
@@ -842,7 +848,7 @@ const CacheHeroStat = ({ label, meta, value }: { label: string; meta: string; va
   <View style={styles.cacheHeroStat}>
     <Text numberOfLines={1} style={styles.cacheHeroStatLabel}>{label}</Text>
     <Text numberOfLines={1} style={styles.cacheHeroStatValue}>{value}</Text>
-    <Text style={styles.cacheHeroStatMeta}>{meta}</Text>
+    <Text numberOfLines={1} style={styles.cacheHeroStatMeta}>{meta}</Text>
   </View>
 );
 

@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import type { ReactNode } from 'react';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import {
   ActivityIndicator,
@@ -12,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import type { ListRenderItemInfo } from 'react-native';
+import type { GestureResponderEvent, StyleProp, ViewStyle } from 'react-native';
 
 import type {
   AdminDuplicateFileDeletePayload,
@@ -26,7 +28,7 @@ import {
   getApiErrorMessage,
 } from '@kwphoto/core';
 
-import { MobileBottomSheetModal, MobileCenterDialog } from '../../components/MobileDialog';
+import { MobileBottomSheetModal } from '../../components/MobileDialog';
 import { MOBILE_SAGE_SLATE, useMobileTheme } from '../../mobile-theme';
 import type {
   MobileDuplicateFilesAutoSelectMode,
@@ -373,15 +375,10 @@ export const MobileDuplicateFilesSheet = ({
   };
 
   /**
-   * Opens one-click selection with a visible message when the current page has no candidates.
+   * Opens one-click selection and keeps unavailable-state feedback inside the sheet.
    */
   const handleOpenAutoSelect = (): void => {
-    if (!hasAutoSelectCandidates) {
-      onMessage('当前页没有可一键选中的重复组');
-      return;
-    }
-
-    setAutoSelectError('');
+    setAutoSelectError(hasAutoSelectCandidates ? '' : '当前页没有可一键选中的重复组。');
     setAutoSelectOpen(true);
   };
 
@@ -583,11 +580,13 @@ export const MobileDuplicateFilesSheet = ({
   return (
     <>
       <MobileBottomSheetModal
-      backdropStyle={styles.modalOverlay}
-      contentStyle={[styles.editorSheet, styles.duplicateFilesSheet]}
-      onClose={onClose}
-      visible={open}
-    >
+        avoidKeyboard
+        backdropStyle={styles.modalOverlay}
+        closeOnBackdrop={!galleryPickerOpen && !autoSelectOpen}
+        contentStyle={[styles.editorSheet, styles.duplicateFilesSheet]}
+        onClose={onClose}
+        visible={open}
+      >
       <View style={styles.modalHeader}>
         <View style={styles.modalTitleWrap}>
           <Text style={styles.modalTitle}>检查重复文件</Text>
@@ -712,10 +711,8 @@ export const MobileDuplicateFilesSheet = ({
           windowSize={7}
         />
       ) : null}
-      </MobileBottomSheetModal>
 
-      <MobileCenterDialog
-        backdropStyle={[styles.modalOverlay, styles.weightModalOverlay]}
+      <DuplicateFilesSheetDialog
         contentStyle={styles.duplicateFilesGalleryDialog}
         onClose={() => setGalleryPickerOpen(false)}
         visible={galleryPickerOpen}
@@ -790,11 +787,9 @@ export const MobileDuplicateFilesSheet = ({
             <Text style={styles.dialogPrimaryText}>确定并检查</Text>
           </Pressable>
         </View>
-      </MobileCenterDialog>
+      </DuplicateFilesSheetDialog>
 
-      <MobileCenterDialog
-        avoidKeyboard
-        backdropStyle={[styles.modalOverlay, styles.weightModalOverlay]}
+      <DuplicateFilesSheetDialog
         contentStyle={styles.duplicateFilesSelectDialog}
         onClose={() => {
           setAutoSelectError('');
@@ -897,9 +892,48 @@ export const MobileDuplicateFilesSheet = ({
             <Text style={styles.dialogPrimaryText}>确定</Text>
           </Pressable>
         </View>
-      </MobileCenterDialog>
+      </DuplicateFilesSheetDialog>
+      </MobileBottomSheetModal>
     </>
   );
+};
+
+interface DuplicateFilesSheetDialogProps {
+  children: ReactNode;
+  contentStyle: StyleProp<ViewStyle>;
+  onClose: () => void;
+  visible: boolean;
+}
+
+/**
+ * Renders secondary duplicate-file dialogs inside the existing bottom-sheet Modal.
+ */
+const DuplicateFilesSheetDialog = ({
+  children,
+  contentStyle,
+  onClose,
+  visible,
+}: DuplicateFilesSheetDialogProps) => {
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <View style={styles.duplicateFilesSheetDialogLayer}>
+      <Pressable onPress={onClose} style={styles.duplicateFilesSheetDialogBackdrop}>
+        <Pressable onPress={stopDuplicateFilesSheetDialogPress} style={[styles.duplicateFilesSheetDialogContent, contentStyle]}>
+          {children}
+        </Pressable>
+      </Pressable>
+    </View>
+  );
+};
+
+/**
+ * Prevents taps inside an inline dialog from closing its backdrop.
+ */
+const stopDuplicateFilesSheetDialogPress = (event: GestureResponderEvent): void => {
+  event.stopPropagation();
 };
 
 const DuplicateFilesMetric = ({ label, value }: { label: string; value: string }) => (

@@ -89,12 +89,13 @@ export const FolderCard = ({
   const folderCoverCacheFolder = useMemo(
     () =>
       createMobileLocalCacheFolderRef({
+        fallbackScopes: cacheFolder.fallbackScopes,
         folderId: folder.id,
         folderName: folder.name,
         folderPath: folder.path,
         scope: cacheFolder.scope,
       }),
-    [cacheFolder.scope, folder.id, folder.name, folder.path],
+    [cacheFolder.fallbackScopes, cacheFolder.scope, folder.id, folder.name, folder.path],
   );
   const coverItems = showCover
     ? folder.coverHashes
