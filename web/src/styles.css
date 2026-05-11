@@ -7280,6 +7280,20 @@ kbd {
   font-size: 24px;
 }
 
+.admin-task-stats {
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+}
+
+.admin-task-stats article {
+  min-height: 68px;
+  gap: 5px;
+  padding: 10px 12px;
+}
+
+.admin-task-stats strong {
+  font-size: 20px;
+}
+
 .cache-list {
   display: grid;
   gap: 8px;

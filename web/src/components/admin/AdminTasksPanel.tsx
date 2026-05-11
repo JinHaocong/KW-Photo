@@ -315,7 +315,7 @@ export const AdminTasksPanel = ({ apiOptions, onShowToast, uploadTasks }: AdminT
         </div>
       </div>
 
-      <div className="cache-stats">
+      <div className="cache-stats admin-task-stats">
         {TASK_TABS.map((status) => (
           <article key={status}>
             <span>{TASK_STATUS_LABELS[status]}</span>
